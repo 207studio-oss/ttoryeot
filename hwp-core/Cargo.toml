@@ -1,0 +1,28 @@
+[package]
+name = "ttoryeot-hwp-core"
+version.workspace = true
+edition = "2021"
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "또렷: HWP5·HWPX 문서를 읽어 공통 문서 모델로 만든다 (HWP/HWPX parser)"
+readme = "../README.md"
+keywords = ["hwp", "hwpx", "parser", "document", "korean"]
+categories = ["parser-implementations"]
+
+[lib]
+name = "hwp_core"
+
+[dependencies]
+aes = "0.9"
+cfb = "0.15"
+crc32fast = "1"
+des = { version = "0.9", default-features = false }
+flate2 = "1"
+hmac = { version = "0.13", default-features = false }
+quick-xml = "0.42"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha1 = { version = "0.11", default-features = false }
+sha2 = { version = "0.11", default-features = false }

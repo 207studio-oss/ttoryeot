@@ -1,0 +1,44 @@
+# `cargo about generate` 설정. 제3자 고지 묶음을 만들 때 쓴다.
+accepted = [
+    "0BSD",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+targets = [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+]
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+
+[private]
+ignore = true
+
+# 207studio 자기 크레이트만 AGPL-3.0을 허용한다(제3자 의존성에는 허용하지 않는다). LICENSING.md 참고.
+
+[ttoryeot]
+accepted = ["AGPL-3.0-only"]
+
+[ttoryeot-hwp-core]
+accepted = ["AGPL-3.0-only"]
+
+[ttoryeot-cli]
+accepted = ["AGPL-3.0-only"]
+
+[ttoryeot-mcp]
+accepted = ["AGPL-3.0-only"]
+
+[ttoryeot-ffi]
+accepted = ["AGPL-3.0-only"]
+
+[ttoryeot-score]
+accepted = ["AGPL-3.0-only"]

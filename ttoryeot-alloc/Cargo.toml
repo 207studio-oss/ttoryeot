@@ -1,0 +1,15 @@
+[package]
+name = "ttoryeot-alloc"
+version.workspace = true
+edition = "2024"
+rust-version.workspace = true
+license = "MIT OR Apache-2.0"
+repository.workspace = true
+homepage.workspace = true
+description = "또렷 플랫폼 모듈이 함께 쓰는 전역 할당자 (global allocator for ttoryeot binaries)"
+readme = "../README.md"
+keywords = ["allocator", "ttoryeot"]
+categories = ["memory-management"]
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"

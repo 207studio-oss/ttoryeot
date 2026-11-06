@@ -1,0 +1,3 @@
+# file reason
+# Value-free exceptions for reference.py text extraction limits.
+hx_space.hwpx reference.py drops hp:hyphen (and HWP5 code 24); Hancom and the engine show "-"

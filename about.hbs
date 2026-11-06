@@ -1,0 +1,27 @@
+{{!-- 제3자 의존 크레이트의 라이선스 전문. `tools/licenses.sh`로 만든다. --}}
+# 의존 크레이트 라이선스
+
+이 파일은 `cargo about generate`로 만듭니다. 직접 고치지 말고 `tools/licenses.sh`를 실행하세요.
+저장소 안의 크레이트(`hwp-core`, `ttoryeot`, `ttoryeot-cli`, `ttoryeot-score`)는 이 저장소의
+라이선스를 따르므로 여기에 넣지 않습니다.
+
+## 라이선스 요약
+
+{{#each overview}}
+- {{{name}}} ({{count}})
+{{/each}}
+
+## 라이선스 전문
+
+{{#each licenses}}
+### {{{name}}}
+
+{{#each used_by}}
+- {{crate.name}} {{crate.version}}
+{{/each}}
+
+```text
+{{{text}}}
+```
+
+{{/each}}

@@ -1,0 +1,30 @@
+[package]
+name = "ttoryeot-mcp"
+version.workspace = true
+edition = "2024"
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "또렷 MCP 서버: AI 도구가 HWP/HWPX를 읽고 PDF·PNG·텍스트로 바꾼다 (read-only HWP/HWPX MCP server)"
+readme = "../README.md"
+keywords = ["hwp", "hwpx", "mcp", "pdf", "korean"]
+categories = ["command-line-utilities", "text-processing"]
+
+[[bin]]
+name = "ttoryeot-mcp"
+path = "src/main.rs"
+
+[dependencies]
+base64 = "0.22"
+clap = { version = "4", features = ["derive"] }
+hayro = { version = "0.8.0", default-features = false }
+hwp-core.workspace = true
+png = "0.18"
+rmcp = { version = "3.8", features = ["transport-io"] }
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
+ttoryeot.workspace = true
+ttoryeot-alloc.workspace = true

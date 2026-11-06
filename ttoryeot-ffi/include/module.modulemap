@@ -1,0 +1,9 @@
+module CTtoryeot {
+    header "ttoryeot.h"
+    export *
+}
+
+module CHWPCore {
+    header "hwp_core.h"
+    export *
+}

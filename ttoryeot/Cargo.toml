@@ -1,0 +1,24 @@
+[package]
+name = "ttoryeot"
+version.workspace = true
+edition = "2024"
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "또렷: HWP/HWPX 문서를 한/글과 같은 모양의 PDF로 그린다 (HWP/HWPX to PDF renderer)"
+readme = "../README.md"
+keywords = ["hwp", "hwpx", "pdf", "renderer", "korean"]
+categories = ["rendering", "text-processing"]
+
+[dependencies]
+hwp-core.workspace = true
+krilla = { package = "ttoryeot-krilla", path = "../vendor/krilla", version = "=0.8.2" }
+skrifa = "0.42"
+unicode-normalization = "0.1"
+imagesize = "0.14"
+image = { version = "0.25", default-features = false, features = ["bmp"] }
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+flate2 = "1"

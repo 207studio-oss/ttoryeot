@@ -1,0 +1,5 @@
+* text=auto eol=lf
+*.ttf binary
+*.hwp binary
+*.hwpx binary
+*.pdf binary

@@ -1,0 +1,30 @@
+[package]
+name = "ttoryeot-cli"
+version.workspace = true
+edition = "2024"
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "또렷 명령줄 도구: HWP/HWPX를 읽어 PDF·PNG·텍스트로 바꾼다 (read-only HWP/HWPX CLI)"
+readme = "../README.md"
+keywords = ["hwp", "hwpx", "pdf", "cli", "korean"]
+categories = ["command-line-utilities", "text-processing"]
+
+[[bin]]
+name = "ttoryeot"
+path = "src/main.rs"
+
+[[bin]]
+name = "hwp-dump"
+path = "src/bin/hwp-dump.rs"
+
+[dependencies]
+hayro = { version = "0.8.0", default-features = false }
+clap = { version = "4", features = ["derive"] }
+hwp-core.workspace = true
+png = "0.18"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ttoryeot.workspace = true
+ttoryeot-alloc.workspace = true

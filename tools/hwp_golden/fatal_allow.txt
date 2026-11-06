@@ -1,0 +1,14 @@
+# file kind reason
+0822a6aa33a1.hwpx PasswordProtected encrypted HWPX manifest
+a74b27b4c561.hwpx PasswordProtected encrypted HWPX manifest
+base.hwp NotHwp synthetic audit fixture is not a valid CFB
+cols.hwp NotHwp synthetic audit fixture is not a valid CFB
+fixed_ls.hwp NotHwp synthetic audit fixture is not a valid CFB
+flag_dist.hwp NotHwp synthetic audit fixture is not a valid CFB
+flag_enc.hwp NotHwp synthetic audit fixture is not a valid CFB
+link_only_nopic.hwp NotHwp synthetic audit fixture is not a valid CFB
+linked_pic.hwp NotHwp synthetic audit fixture is not a valid CFB
+numbering_fmt.hwp NotHwp synthetic audit fixture is not a valid CFB
+pgnp.hwp NotHwp synthetic audit fixture is not a valid CFB
+ruby.hwp NotHwp synthetic audit fixture is not a valid CFB
+table_caption.hwp NotHwp synthetic audit fixture is not a valid CFB

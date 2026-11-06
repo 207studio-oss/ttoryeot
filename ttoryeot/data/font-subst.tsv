@@ -1,0 +1,218 @@
+# 또렷 글꼴 대체 규칙. 줄마다 종류<TAB>이름<TAB>대신할 이름(또는 값).
+# legacy-latin·hft·hft-latin·ttf 표의 출처와 사용 허가: THIRD_PARTY_NOTICES.md(rhwp, MIT).
+# 조회 순서: 영문 칸이면 legacy-latin → 글꼴 종류가 HFT(2)면 hft(hft-latin은 영문 칸만) → ttf.
+# alias: 한컴 글꼴 파일 이름으로 적힌 이름.
+# missing: 그 이름의 글꼴이 없을 때 한/글이 대신 쓴 글꼴. 맥 한/글 12.30 기준 PDF에 박힌 글꼴 이름으로 확인했다.
+# serif-word: 이름에 이 낱말이 들면 명조 계열로 대신한다. gungseo-word: 궁서 계열.
+# fallback-serif·fallback-gungseo·fallback-gothic: 찾지 못한 글꼴을 대신할 이름(앞에서부터, 있는 것을 쓴다).
+# fallback-glyph: 고른 글꼴에 글자가 없을 때 차례로 찾아볼 글꼴.
+alias	hbatang	한컴바탕
+alias	hdotum	한컴돋움
+missing	바탕	한컴바탕
+missing	돋움	한컴돋움
+# 한양신명조(HFT)는 PDF에 글꼴 이름이 남지 않는다(윤곽선). 「」 같은 기호를 전각 폭으로 놓는 것을 글자 자리로 확인했다.
+missing	한양신명조	한컴바탕
+serif-word	바탕	-
+serif-word	명조	-
+serif-word	batang	-
+serif-word	myungjo	-
+serif-word	myeongjo	-
+serif-word	mincho	-
+serif-word	serif	-
+serif-word	times	-
+gungseo-word	궁서	-
+fallback-serif	함초롬바탕	-
+fallback-serif	HCR Batang	-
+fallback-serif	한컴바탕	-
+fallback-serif	바탕	-
+# Noto는 한컴 글꼴이 없는 앱이 함께 싣는 글꼴이다. 맨 뒤에 두어 설치된 한컴 글꼴을 이기지 않는다.
+fallback-serif	Noto Serif KR	-
+fallback-gungseo	궁서	-
+fallback-gungseo	함초롬바탕	-
+fallback-gungseo	Noto Serif KR	-
+fallback-gothic	함초롬돋움	-
+fallback-gothic	HCR Dotum	-
+fallback-gothic	한컴돋움	-
+fallback-gothic	맑은 고딕	-
+fallback-gothic	돋움	-
+fallback-gothic	Noto Sans KR	-
+fallback-glyph	함초롬돋움	-
+fallback-glyph	함초롬바탕	-
+fallback-glyph	맑은 고딕	-
+fallback-glyph	바탕	-
+fallback-glyph	Segoe UI Symbol	-
+fallback-glyph	Cambria Math	-
+fallback-glyph	Segoe UI Emoji	-
+fallback-glyph	MS Gothic	-
+fallback-glyph	SimSun	-
+legacy-latin	HCI Poppy	Palatino Linotype
+legacy-latin	HCI Tulip	HY견명조
+legacy-latin	HCI Morning Glory	HY견명조
+legacy-latin	HCI Centaurea	HY견명조
+legacy-latin	HCI Bellflower	HY견명조
+legacy-latin	AmeriGarmnd BT	HY견명조
+legacy-latin	Bodoni Bd BT	HY견명조
+legacy-latin	Bodoni Bk BT	HY견명조
+legacy-latin	Baskerville BT	HY견명조
+legacy-latin	GoudyOlSt BT	HY견명조
+legacy-latin	Cooper Blk BT	HY견명조
+legacy-latin	Stencil BT	HY견명조
+legacy-latin	BrushScript BT	HY견명조
+legacy-latin	CommercialScript BT	HY견명조
+legacy-latin	Liberty BT	HY견명조
+legacy-latin	MurrayHill Bd BT	HY견명조
+legacy-latin	ParkAvenue BT	HY견명조
+legacy-latin	CentSchbook BT	HY견명조
+legacy-latin	펜흘림	HY견명조
+legacy-latin	HCI Hollyhock	HY중고딕
+legacy-latin	HCI Hollyhock Narrow	HY중고딕
+legacy-latin	HCI Acacia	HY중고딕
+legacy-latin	Swis721 BT	HY중고딕
+legacy-latin	Hobo BT	HY중고딕
+legacy-latin	Orbit-B BT	HY중고딕
+legacy-latin	Blippo Blk BT	HY중고딕
+legacy-latin	BroadwayEngraved BT	HY중고딕
+legacy-latin	FuturaBlack BT	HY중고딕
+legacy-latin	Newtext Bk BT	HY중고딕
+legacy-latin	DomCasual BT	HY중고딕
+legacy-latin	가는안상수체영문	HY중고딕
+legacy-latin	중간안상수체영문	HY중고딕
+legacy-latin	굵은안상수체영문	HY중고딕
+legacy-latin	BernhardFashion BT	HY중고딕
+legacy-latin	Freehand591 BT	HY중고딕
+hft	한양그래픽	굴림
+hft	한양궁서	궁서
+hft	신명 태고딕	HY중고딕
+hft	신명 태명조	HY신명조
+hft	신명 견고딕	HY견고딕
+hft	신명 견명조	HY견명조
+hft	신명 태그래픽	HY그래픽
+hft	신명 중고딕	HY중고딕
+hft	태 가는 헤드라인T	HY헤드라인M
+hft	태 가는 헤드라인D	HY헤드라인M
+hft	양재 튼튼B	양재튼튼체B
+hft	명조	HY견명조
+hft	신명 세명조	HY신명조
+hft	신명 신명조	HY신명조
+hft	신명 신신명조	HY신명조
+hft	신명 중명조	HY신명조
+hft	신명 순명조	HY신명조
+hft	신명 신문명조	HY신명조
+hft	옛한글	HY신명조
+hft	양재 다운명조M	HY신명조
+hft	휴먼고딕	돋움
+hft	문화돋움	돋움
+hft	문화돋움제목	돋움
+hft	태 나무	돋움
+hft	휴먼옛체	돋움
+hft	딸기	돋움
+hft	샘물	돋움
+hft	가는한	돋움
+hft	중간한	돋움
+hft	굵은한	돋움
+hft	휴먼가는샘체	돋움
+hft	휴먼중간샘체	돋움
+hft	휴먼굵은샘체	돋움
+hft	휴먼가는팸체	돋움
+hft	휴먼중간팸체	돋움
+hft	휴먼굵은팸체	돋움
+hft	가는안상수체	돋움
+hft	중간안상수체	돋움
+hft	굵은안상수체	돋움
+hft	양재 매화	돋움
+hft	양재 소슬	돋움
+hft	양재 샤넬	돋움
+hft	옥수수	돋움
+hft	양재 본목각M	돋움
+hft	복숭아	돋움
+hft	신명 세고딕	돋움
+hft	신명 디나루	돋움
+hft	신명 세나루	돋움
+hft	#세고딕	돋움
+hft	#신세고딕	돋움
+hft	#중고딕	돋움
+hft	#태고딕	돋움
+hft	#신문고딕	돋움
+hft	#신문태고	돋움
+hft	#세나루	돋움
+hft	#신세나루	돋움
+hft	#디나루	돋움
+hft	#신디나루	돋움
+hft	신명 신그래픽	굴림
+hft	강낭콩	굴림
+hft	#그래픽	굴림
+hft	#신그래픽	굴림
+hft	#공작	굴림
+hft	양재 참숯B	HY견고딕
+hft	양재 와당	HY견고딕
+hft	양재 이니셜	HY견고딕
+hft	#빅	HY견고딕
+hft	태 헤드라인T	HY견고딕
+hft	태 헤드라인D	HY견명조
+hft	가지	HY견명조
+hft	오이	HY견명조
+hft	양재 둘기	HY견명조
+hft	신명 궁서	궁서
+hft	#궁서	궁서
+hft	#수암A	돋움
+hft	#수암B	돋움
+hft	시스템	돋움
+hft	HY둥근고딕	돋움
+hft	고딕	돋움
+hft	산세리프	Calibri
+hft	HCI Poppy	Palatino Linotype
+hft	수식	HY신명조
+hft	한글 풀어쓰기	HY견명조
+hft-latin	HCI Tulip	HY견명조
+hft-latin	HCI Morning Glory	HY견명조
+hft-latin	HCI Centaurea	HY견명조
+hft-latin	HCI Bellflower	HY견명조
+hft-latin	AmeriGarmnd BT	HY견명조
+hft-latin	Bodoni Bd BT	HY견명조
+hft-latin	Bodoni Bk BT	HY견명조
+hft-latin	Baskerville BT	HY견명조
+hft-latin	GoudyOlSt BT	HY견명조
+hft-latin	Cooper Blk BT	HY견명조
+hft-latin	Stencil BT	HY견명조
+hft-latin	BrushScript BT	HY견명조
+hft-latin	CommercialScript BT	HY견명조
+hft-latin	Liberty BT	HY견명조
+hft-latin	MurrayHill Bd BT	HY견명조
+hft-latin	ParkAvenue BT	HY견명조
+hft-latin	CentSchbook BT	HY견명조
+hft-latin	펜흘림	HY견명조
+hft-latin	HCI Hollyhock	HY중고딕
+hft-latin	HCI Hollyhock Narrow	HY중고딕
+hft-latin	HCI Acacia	HY중고딕
+hft-latin	Swis721 BT	HY중고딕
+hft-latin	Hobo BT	HY중고딕
+hft-latin	Orbit-B BT	HY중고딕
+hft-latin	Blippo Blk BT	HY중고딕
+hft-latin	BroadwayEngraved BT	HY중고딕
+hft-latin	FuturaBlack BT	HY중고딕
+hft-latin	Newtext Bk BT	HY중고딕
+hft-latin	DomCasual BT	HY중고딕
+hft-latin	가는안상수체영문	HY중고딕
+hft-latin	중간안상수체영문	HY중고딕
+hft-latin	굵은안상수체영문	HY중고딕
+hft-latin	BernhardFashion BT	HY중고딕
+hft-latin	Freehand591 BT	HY중고딕
+ttf	Gulim	굴림
+ttf	HYHeadLine Medium	HY헤드라인M
+ttf	Malgun Gothic	맑은 고딕
+ttf	HY그래픽M	HY그래픽
+ttf	SPOQAHANSANS	SpoqaHanSans
+ttf	MS Sans Serif	함초롬돋움
+ttf	Tahoma	함초롬돋움
+ttf	백묵 굴림	굴림
+ttf	백묵 돋움	돋움
+ttf	백묵 바탕	바탕
+ttf	백묵 헤드라인	돋움
+ttf	Gulimche	돋움
+ttf	새바탕	함초롬바탕
+ttf	새돋움	함초롬돋움
+ttf	새굴림	함초롬돋움
+ttf	새궁서	함초롬바탕
+ttf	가는안상수체	돋움
+ttf	중간안상수체	돋움
+ttf	굵은안상수체	돋움
