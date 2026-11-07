@@ -16,6 +16,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod components;
 mod equation;
 pub mod fonts;
 mod hft;
@@ -83,10 +84,42 @@ pub fn render(doc: &Document, fonts: &mut FontBook) -> Vec<scene::Page> {
     layout::Renderer::new(doc, fonts).layout().pages
 }
 
+/// [`render`]와 같은 배치에서 쪽마다 구성 요소(문단·표·칸·개체·머리말 등)의 자리도 함께 돌려준다.
+///
+/// 두 목록은 같은 쪽 수와 같은 쪽 번호를 쓴다. 구성 요소는 배치하면서 적은 것이라 그린 것과 어긋나지 않는다.
+pub fn render_with_components(
+    doc: &Document,
+    fonts: &mut FontBook,
+) -> (Vec<scene::Page>, Vec<components::PageComponents>) {
+    fonts.attach_document(doc);
+    let layout = layout::Renderer::new(doc, fonts)
+        .recording_components()
+        .layout();
+    (layout.pages, layout.components)
+}
+
 /// HWP·HWPX 바이트를 읽어 PDF로 만든다. 암호 문서는 `password`가 맞아야 열린다.
 ///
 /// 글꼴은 미리 [`FontBook`]에 색인해 두어야 한다. 아무 글꼴도 없으면 글자가 빈 칸으로 남는다.
 pub fn to_pdf(bytes: &[u8], password: Option<&str>, fonts: &mut FontBook) -> Result<Output, Error> {
+    Ok(convert(bytes, password, fonts, false)?.0)
+}
+
+/// [`to_pdf`]와 같은 PDF에 더해, 쪽마다 구성 요소의 자리를 돌려준다. 좌표는 [`components`]에 적었다.
+pub fn to_pdf_with_components(
+    bytes: &[u8],
+    password: Option<&str>,
+    fonts: &mut FontBook,
+) -> Result<(Output, Vec<components::PageComponents>), Error> {
+    convert(bytes, password, fonts, true)
+}
+
+fn convert(
+    bytes: &[u8],
+    password: Option<&str>,
+    fonts: &mut FontBook,
+    record: bool,
+) -> Result<(Output, Vec<components::PageComponents>), Error> {
     let options = ParseOptions {
         password: password.map(str::to_string),
         ..ParseOptions::default()
@@ -94,15 +127,20 @@ pub fn to_pdf(bytes: &[u8], password: Option<&str>, fonts: &mut FontBook) -> Res
     let hwp_core::Parsed {
         document, warnings, ..
     } = hwp_core::parse(bytes, &options)?;
-    let pages = render(&document, fonts);
+    let (pages, components) = if record {
+        render_with_components(&document, fonts)
+    } else {
+        (render(&document, fonts), Vec::new())
+    };
     drop(document);
     let count = pages.len();
     let pdf = pdf::write(pages, fonts).map_err(Error::Pdf)?;
-    Ok(Output {
+    let output = Output {
         pdf,
         pages: count,
         warnings,
-    })
+    };
+    Ok((output, components))
 }
 
 /// PDF 바이트만 필요한 경우의 짧은 길.

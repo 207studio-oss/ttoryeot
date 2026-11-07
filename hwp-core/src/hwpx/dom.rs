@@ -221,7 +221,7 @@ fn attach(
     Some(())
 }
 
-fn resolve_reference(name: &str) -> Option<String> {
+pub(super) fn resolve_reference(name: &str) -> Option<String> {
     if let Some(digits) = name.strip_prefix("#x") {
         let value = u32::from_str_radix(digits, 16).ok()?;
         return char::from_u32(value).map(|character| character.to_string());

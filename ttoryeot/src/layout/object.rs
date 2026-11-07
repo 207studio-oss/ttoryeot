@@ -1,6 +1,8 @@
 //! 개체(그림·도형)와 선·테두리 그리기.
 
-use super::{Renderer, mm, pt};
+use super::record::{self, Flags};
+use super::{Renderer, mm, object_pos, pt};
+use crate::components::Kind;
 use crate::scene::{self, ImageData, Item, PathOp, Rect};
 use hwp_core::{Border, BorderFill, Caption, ImageFill, Picture, RunItem, Section, Shape};
 use std::sync::Arc;
@@ -491,12 +493,30 @@ impl<'a> Renderer<'a> {
             _ => ((rect.x, rect.bottom() + gap), rect.width),
         };
         let mut last_vert = -1.0;
+        self.rec.begin(Kind::Caption, "캡션", "", Flags::default());
         for para in &caption.paragraphs {
             self.layout_paragraph(para, origin, width, section, false, &mut last_vert, None);
         }
+        self.rec.end();
     }
 
     pub(crate) fn place(&mut self, item: &'a RunItem, rect: Rect, section: &'a Section) {
+        let Some((kind, name, text)) = record::object_label(item).filter(|_| self.rec.on) else {
+            self.place_object(item, rect, section);
+            return;
+        };
+        let flags = Flags {
+            floating: !object_pos(item).treat_as_char && !self.rec.inside_object(),
+            behind: self.behind,
+            hidden: false,
+        };
+        self.rec.begin(kind, &name, &text, flags);
+        self.rec_extend(rect);
+        self.place_object(item, rect, section);
+        self.rec.end();
+    }
+
+    fn place_object(&mut self, item: &'a RunItem, rect: Rect, section: &'a Section) {
         match item {
             RunItem::Table(table) => self.layout_table(table, (rect.x, rect.y), section),
             RunItem::Picture(picture) => {

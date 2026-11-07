@@ -1,5 +1,6 @@
 use std::cell::Cell;
-use std::io::Read;
+use std::collections::BTreeMap;
+use std::io::{Read, Write};
 
 const EOCD_MAGIC: u32 = 0x0605_4b50;
 const CENTRAL_MAGIC: u32 = 0x0201_4b50;
@@ -16,6 +17,7 @@ pub struct Entry {
     comp_size: usize,
     uncomp_size: usize,
     local_offset: usize,
+    central: (usize, usize),
     invalid: bool,
 }
 
@@ -28,6 +30,7 @@ pub enum ZipError {
 #[derive(Debug, Clone)]
 pub struct MiniZip<'a> {
     data: &'a [u8],
+    eocd: usize,
     entries: Vec<Entry>,
     decoded: Cell<u64>,
     budget: u64,
@@ -95,6 +98,7 @@ impl<'a> MiniZip<'a> {
                 comp_size,
                 uncomp_size,
                 local_offset,
+                central: (position, next),
                 invalid: false,
             });
             position = next;
@@ -105,6 +109,7 @@ impl<'a> MiniZip<'a> {
         mark_invalid_entries(data, &mut entries);
         Some(Self {
             data,
+            eocd,
             entries,
             decoded: Cell::new(0),
             budget,
@@ -183,6 +188,105 @@ impl<'a> MiniZip<'a> {
             .set(self.decoded.get().saturating_add(decoded.len() as u64));
         Ok(decoded)
     }
+}
+
+impl MiniZip<'_> {
+    /// 이름이 같은 항목의 내용만 `replacements`로 바꾼 새 압축 꾸러미를 만든다.
+    ///
+    /// 바꾸지 않는 항목은 압축된 바이트를 그대로 옮기고, 항목 차례·압축 방식·시각·여분 필드·꾸러미 주석도
+    /// 그대로 둔다. 바꾼 항목은 원래 압축 방식으로 다시 쓴다. 이름을 못 찾거나 깨진 항목이 있으면 실패한다.
+    pub fn rewrite(&self, replacements: &BTreeMap<String, Vec<u8>>) -> Result<Vec<u8>, ZipError> {
+        let data = self.data;
+        for name in replacements.keys() {
+            let mut same = self.entries.iter().filter(|entry| &entry.name == name);
+            match (same.next(), same.next()) {
+                (Some(entry), None) if matches!(entry.method, 0 | 8) => {}
+                _ => return Err(ZipError::Malformed),
+            }
+        }
+        let mut output = Vec::with_capacity(data.len());
+        let mut directory = Vec::new();
+        for entry in &self.entries {
+            if entry.invalid {
+                return Err(ZipError::Malformed);
+            }
+            let (start, end) = entry_range(data, entry).ok_or(ZipError::Malformed)?;
+            let central = &data[entry.central.0..entry.central.1];
+            let name_length =
+                usize::from(read_u16(data, entry.local_offset + 26).ok_or(ZipError::Malformed)?);
+            let local_extra_length =
+                usize::from(read_u16(data, entry.local_offset + 28).ok_or(ZipError::Malformed)?);
+            let name_end = entry.local_offset + 30 + name_length;
+            let local_extra = &data[name_end..name_end + local_extra_length];
+            let name = &data[entry.local_offset + 30..name_end];
+
+            let replaced;
+            let (payload, crc, comp_size, uncomp_size) = match replacements.get(&entry.name) {
+                Some(content) => {
+                    let payload = match entry.method {
+                        8 => deflate_raw(content),
+                        _ => content.clone(),
+                    };
+                    replaced = payload;
+                    (
+                        replaced.as_slice(),
+                        crc32fast::hash(content),
+                        replaced.len(),
+                        content.len(),
+                    )
+                }
+                None => (
+                    &data[start..end],
+                    read_u32(central, 16).ok_or(ZipError::Malformed)?,
+                    entry.comp_size,
+                    entry.uncomp_size,
+                ),
+            };
+            let (comp, uncomp) = (
+                u32::try_from(comp_size).map_err(|_| ZipError::TooLarge)?,
+                u32::try_from(uncomp_size).map_err(|_| ZipError::TooLarge)?,
+            );
+            let offset = u32::try_from(output.len()).map_err(|_| ZipError::TooLarge)?;
+            let central_flags = read_u16(central, 8).ok_or(ZipError::Malformed)? & !0x0008;
+            let local_flags =
+                read_u16(data, entry.local_offset + 6).ok_or(ZipError::Malformed)? & !0x0008;
+
+            let local = &data[entry.local_offset..entry.local_offset + 30];
+            output.extend_from_slice(&local[..6]);
+            output.extend_from_slice(&local_flags.to_le_bytes());
+            output.extend_from_slice(&local[8..14]);
+            output.extend_from_slice(&crc.to_le_bytes());
+            output.extend_from_slice(&comp.to_le_bytes());
+            output.extend_from_slice(&uncomp.to_le_bytes());
+            output.extend_from_slice(&local[26..30]);
+            output.extend_from_slice(name);
+            output.extend_from_slice(local_extra);
+            output.extend_from_slice(payload);
+
+            let mut record = central.to_vec();
+            record[8..10].copy_from_slice(&central_flags.to_le_bytes());
+            record[16..20].copy_from_slice(&crc.to_le_bytes());
+            record[20..24].copy_from_slice(&comp.to_le_bytes());
+            record[24..28].copy_from_slice(&uncomp.to_le_bytes());
+            record[42..46].copy_from_slice(&offset.to_le_bytes());
+            directory.extend_from_slice(&record);
+        }
+        let directory_offset = u32::try_from(output.len()).map_err(|_| ZipError::TooLarge)?;
+        let directory_size = u32::try_from(directory.len()).map_err(|_| ZipError::TooLarge)?;
+        let mut tail = data[self.eocd..].to_vec();
+        tail[12..16].copy_from_slice(&directory_size.to_le_bytes());
+        tail[16..20].copy_from_slice(&directory_offset.to_le_bytes());
+        output.extend_from_slice(&directory);
+        output.extend_from_slice(&tail);
+        Ok(output)
+    }
+}
+
+fn deflate_raw(content: &[u8]) -> Vec<u8> {
+    let mut encoder =
+        flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder.write_all(content).expect("write to memory");
+    encoder.finish().expect("finish in memory")
 }
 
 fn entry_range(data: &[u8], entry: &Entry) -> Option<(usize, usize)> {

@@ -1,7 +1,9 @@
 //! 표: 열 너비·행 높이, 칸 그리기, 쪽에서 나뉜 표.
 
 use super::object::{Edge, LineGrid, border_items, frame_items};
+use super::record::Flags;
 use super::{Renderer, page_scale, pt};
+use crate::components::Kind;
 use crate::scene::{Item, Rect};
 use hwp_core::{Cell, Paragraph, Section, Table};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -696,6 +698,18 @@ impl<'a> Renderer<'a> {
             _ => 0,
         };
         let mut borders: Vec<Item> = Vec::new();
+        let flags = Flags {
+            floating: !table.pos.treat_as_char && !self.rec.inside_object(),
+            behind: self.behind,
+            hidden: false,
+        };
+        self.rec.begin(Kind::Table, "표", "", flags);
+        self.rec_extend(Rect::new(
+            origin.0,
+            origin.1,
+            col_x[col_x.len() - 1],
+            row_y[row_y.len() - 1],
+        ));
         for (ci, cell) in table.cells.iter().enumerate() {
             let Some(col) = index(cell.col, columns.len()) else {
                 continue;
@@ -718,6 +732,18 @@ impl<'a> Renderer<'a> {
                 col_x[end] - col_x[col] - spacing,
                 row_y[last + 1] - row_y[first] - spacing,
             );
+            let span_text = if cell.row_span > 1 || cell.col_span > 1 {
+                format!("{}행 {}열 병합", cell.row_span.max(1), cell.col_span.max(1))
+            } else {
+                String::new()
+            };
+            self.rec.begin(
+                Kind::Cell,
+                &format!("{}행 {}열", cell.row + 1, cell.col + 1),
+                &span_text,
+                Flags::default(),
+            );
+            self.rec_extend(rect);
             let fill = self.border_fills.get(&cell.border_fill_id).copied();
             if let Some(fill) = fill {
                 match &fill.gradation {
@@ -857,6 +883,7 @@ impl<'a> Renderer<'a> {
                     );
                 }
             }
+            self.rec.end();
         }
         // 한/글은 셀이 맞붙은 표에서는 셀 테두리만 그리고, 표 테두리는 셀 간격이 있을 때 바깥 틀로만 그린다.
         if table.cell_spacing > 0.0
@@ -887,6 +914,7 @@ impl<'a> Renderer<'a> {
         for item in borders {
             self.add(item);
         }
+        self.rec.end();
     }
 
     /// 나뉜 표의 조각별 (행 번호, 그릴 높이 HWPUNIT). 첫 조각은 저장된 표 높이까지, 다음 조각은 `capacity`까지 채운다.

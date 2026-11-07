@@ -108,7 +108,7 @@ fn error_text(result: &Value) -> &str {
 }
 
 #[test]
-fn lists_exactly_the_five_tools() {
+fn lists_exactly_the_six_tools() {
     let mut client = Client::start(None);
     let response = client.request("tools/list", json!({}));
     let mut names: Vec<&str> = response["result"]["tools"]
@@ -126,6 +126,7 @@ fn lists_exactly_the_five_tools() {
             "read_document_info",
             "render_page_png",
             "render_pdf",
+            "replace_text",
         ]
     );
     let schemas = response.to_string();
@@ -208,6 +209,89 @@ fn renders_a_new_pdf_and_never_overwrites() {
     let onto_input = client.call("render_pdf", json!({"path": input, "output": input}));
     assert!(!error_text(&onto_input).is_empty());
     assert_eq!(std::fs::read(&input).unwrap(), before);
+}
+
+#[test]
+fn replaces_text_into_a_new_hwpx_and_never_overwrites() {
+    let mut client = Client::start(None);
+    let input = fixture("synthetic.hwpx");
+    let original = std::fs::read(&input).unwrap();
+    let output = temp("mcp-replace.hwpx");
+    let _ = std::fs::remove_file(&output);
+
+    let result = client.call(
+        "replace_text",
+        json!({"path": input, "output": output, "search": "ALPHA", "replacement": "ALPHA-2"}),
+    );
+    let report = json_block(&result, 0);
+    assert_eq!(report["occurrence"], 1, "{report}");
+    let edited = std::fs::read(&output).unwrap();
+    assert!(edited.starts_with(b"PK"));
+    let text = client.call("extract_text", json!({"path": output}));
+    let flat = text_block(&text, 0).replace('\n', "");
+    assert!(flat.contains("ALPHA-2") && flat.contains("BETA"), "{text}");
+    assert_eq!(std::fs::read(&input).unwrap(), original);
+
+    let again = client.call(
+        "replace_text",
+        json!({"path": input, "output": output, "search": "BETA", "replacement": "B"}),
+    );
+    assert!(!error_text(&again).is_empty());
+    assert_eq!(std::fs::read(&output).unwrap(), edited);
+    let _ = std::fs::remove_file(&output);
+
+    let onto_input = client.call(
+        "replace_text",
+        json!({"path": input, "output": input, "search": "BETA", "replacement": "B"}),
+    );
+    assert!(!error_text(&onto_input).is_empty());
+    assert_eq!(std::fs::read(&input).unwrap(), original);
+
+    let pdf = temp("mcp-replace.pdf");
+    let _ = std::fs::remove_file(&pdf);
+    let wrong_extension = client.call(
+        "replace_text",
+        json!({"path": input, "output": pdf, "search": "BETA", "replacement": "B"}),
+    );
+    assert!(error_text(&wrong_extension).contains(".hwpx"));
+    assert!(!pdf.exists());
+}
+
+#[test]
+fn asks_which_occurrence_instead_of_replacing_every_match() {
+    let mut client = Client::start(None);
+    let input = fixture("synthetic.hwpx");
+    let output = temp("mcp-replace-ambiguous.hwpx");
+    let _ = std::fs::remove_file(&output);
+
+    let ambiguous = client.call(
+        "replace_text",
+        json!({"path": input, "output": output, "search": "A", "replacement": "a"}),
+    );
+    let message = error_text(&ambiguous);
+    assert!(
+        message.contains("3군데") && message.contains("occurrence"),
+        "{message}"
+    );
+    assert!(message.contains("[A]"), "{message}");
+    assert!(!output.exists());
+
+    let missing = client.call(
+        "replace_text",
+        json!({"path": input, "output": output, "search": "없는글", "replacement": "a"}),
+    );
+    assert!(!error_text(&missing).is_empty());
+    assert!(!output.exists());
+
+    let chosen = client.call(
+        "replace_text",
+        json!({"path": input, "output": output, "search": "A", "replacement": "a", "occurrence": 3}),
+    );
+    assert_eq!(json_block(&chosen, 0)["occurrence"], 3);
+    let text = client.call("extract_text", json!({"path": output}));
+    let flat = text_block(&text, 0).replace('\n', "");
+    assert!(flat.contains("BETa") && flat.contains("ALPHA"), "{text}");
+    let _ = std::fs::remove_file(&output);
 }
 
 #[test]

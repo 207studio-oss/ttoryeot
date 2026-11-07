@@ -1,6 +1,7 @@
 mod columns;
 mod crypt;
 pub mod dom;
+pub mod edit;
 pub mod header;
 mod markpen;
 mod page_border_fill;

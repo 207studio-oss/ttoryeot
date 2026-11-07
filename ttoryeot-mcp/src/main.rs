@@ -1,4 +1,5 @@
-//! 또렷 MCP 서버: HWP/HWPX를 읽어 정보, 텍스트, PDF, PNG를 돌려준다. 원본은 고치지 않는다.
+//! 또렷 MCP 서버: HWP/HWPX를 읽어 정보, 텍스트, PDF, PNG를 돌려주고, HWPX는 짧은 글 한 군데를 바꿔 새 HWPX로 저장한다.
+//! 원본은 고치지 않는다.
 
 mod raster;
 
@@ -10,6 +11,7 @@ use std::sync::Arc;
 
 use base64::Engine;
 use clap::Parser;
+use hwp_core::hwpx::edit::{self, EditError};
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig};
@@ -29,7 +31,7 @@ const PASSWORD_VARIABLE: &str = "TTORYEOT_PASSWORD";
 /// 도구 인자는 믿을 수 없다. 장치 파일이나 거대한 파일을 읽느라 서버가 멈추지 않게 막는다.
 const MAX_INPUT_BYTES: u64 = 1024 * 1024 * 1024;
 
-const INSTRUCTIONS: &str = "HWP와 HWPX 문서를 읽기 전용으로 다룹니다. 경로는 절대 경로로 주세요.";
+const INSTRUCTIONS: &str = "HWP와 HWPX 문서를 읽고, HWPX는 짧은 글 한 군데를 바꿔 새 HWPX로 저장합니다. 원본은 고치지 않습니다. 경로는 절대 경로로 주세요.";
 
 #[derive(Parser)]
 #[command(
@@ -98,6 +100,20 @@ struct PngRequest {
 }
 
 #[derive(Deserialize, JsonSchema)]
+struct ReplaceRequest {
+    /// HWPX 파일의 절대 경로
+    path: PathBuf,
+    /// 만들 HWPX의 절대 경로. 끝이 .hwpx여야 하고, 이미 있는 파일은 덮어쓰지 않습니다
+    output: PathBuf,
+    /// 바꿀 글. 서식이 같은 한 조각 안의 짧은 글이어야 합니다
+    search: String,
+    /// 새 글. 탭과 줄 바꿈은 넣을 수 없습니다
+    replacement: String,
+    /// 같은 글이 여러 군데일 때 몇 번째인지. 1부터 셉니다. 한 군데뿐이면 생략합니다
+    occurrence: Option<usize>,
+}
+
+#[derive(Deserialize, JsonSchema)]
 struct FontsRequest {
     /// 이 문서가 쓰는 글꼴만 확인합니다. 없으면 찾은 글꼴 수와 폴더만 알려 줍니다
     document: Option<PathBuf>,
@@ -126,6 +142,13 @@ struct PngMeta {
     dpi: u32,
     width: u32,
     height: u32,
+}
+
+#[derive(Serialize)]
+struct ReplaceReport {
+    output: String,
+    occurrence: usize,
+    bytes: usize,
 }
 
 #[derive(Serialize)]
@@ -172,26 +195,42 @@ fn explain(error: ttoryeot::Error) -> String {
     }
 }
 
-/// 보기 전용 약속을 지키려고 있는 파일은 어떤 것도 덮어쓰지 않는다. 원본도 여기에 포함된다.
-fn write_new_pdf(path: &Path, pdf: &[u8]) -> Result<(), String> {
+/// 원본을 지키려고 있는 파일은 어떤 것도 덮어쓰지 않는다. 원본도 여기에 포함된다.
+fn write_new_file(path: &Path, extension: &str, content: &[u8]) -> Result<(), String> {
     let failure = |error: &dyn std::fmt::Display| {
         format!("{}을(를) 쓰지 못했습니다: {error}", path.display())
     };
     if !path
         .extension()
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("pdf"))
+        .is_some_and(|candidate| candidate.eq_ignore_ascii_case(extension))
     {
-        return Err(failure(&"경로의 끝이 .pdf여야 합니다"));
+        return Err(failure(&format!("경로의 끝이 .{extension}여야 합니다")));
     }
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(path)
         .map_err(|error| failure(&error))?;
-    file.write_all(pdf).map_err(|error| {
+    file.write_all(content).map_err(|error| {
         let _ = std::fs::remove_file(path);
         failure(&error)
     })
+}
+
+fn explain_edit(error: EditError, bytes: &[u8], search: &str) -> String {
+    let EditError::Ambiguous { count } = error else {
+        return error.to_string();
+    };
+    let mut message = format!(
+        "같은 글이 {count}군데 있습니다. occurrence에 몇 번째인지 1~{count} 중에서 정해 주세요."
+    );
+    for found in edit::find_text(bytes, search).unwrap_or_default() {
+        message.push_str(&format!(
+            "\n{}번째 (구역 {}): {}[{search}]{} / 문단 시작 \"{}\"",
+            found.occurrence, found.section, found.before, found.after, found.paragraph
+        ));
+    }
+    message
 }
 
 fn default_font_paths() -> Vec<PathBuf> {
@@ -345,7 +384,7 @@ impl Server {
             if selected.pages.is_empty() {
                 return Err(no_pages_selected(selected.page_count));
             }
-            write_new_pdf(&request.output, &selected.pdf)?;
+            write_new_file(&request.output, "pdf", &selected.pdf)?;
             Ok(vec![json_result(&PdfReport {
                 output: request.output.display().to_string(),
                 page_count: selected.page_count,
@@ -384,6 +423,32 @@ impl Server {
                 Ok(())
             })?;
             Ok(content)
+        })
+        .await
+    }
+
+    #[tool(
+        description = "HWPX 문서의 짧은 글 한 군데를 바꿔 새 HWPX 파일로 저장합니다. 글자 모양, 문단 모양, 줄 간격은 그대로 두고 글만 바꾸며, 이미 있는 파일은 덮어쓰지 않습니다. 같은 글이 여러 군데면 occurrence로 정해야 합니다"
+    )]
+    async fn replace_text(
+        &self,
+        Parameters(request): Parameters<ReplaceRequest>,
+    ) -> CallToolResult {
+        self.run(move |_| {
+            let bytes = read_input(&request.path)?;
+            let edited = edit::replace_text(
+                &bytes,
+                &request.search,
+                &request.replacement,
+                request.occurrence,
+            )
+            .map_err(|error| explain_edit(error, &bytes, &request.search))?;
+            write_new_file(&request.output, "hwpx", &edited)?;
+            Ok(vec![json_result(&ReplaceReport {
+                output: request.output.display().to_string(),
+                occurrence: request.occurrence.unwrap_or(1),
+                bytes: edited.len(),
+            })?])
         })
         .await
     }

@@ -2,12 +2,14 @@
 
 HWP/HWPX 문서를 한/글에서 연 것과 같은 모양으로 PDF로 그리는 Rust 엔진입니다.
 문서를 읽는 파서, 쪽에 배치하는 렌더러, 한/글 기준 PDF와 비교하는 채점기로 이루어져 있습니다.
-명령줄 도구와 MCP 서버로 PDF, PNG, 텍스트를 뽑습니다. 편집기는 아닙니다.
+명령줄 도구와 MCP 서버로 PDF, PNG, 텍스트를 뽑습니다. 편집기는 아닙니다. 다만 HWPX의 짧은 글
+한 군데는 서식을 건드리지 않고 바꿔 새 HWPX로 저장할 수 있습니다.
 
-**Ttoryeot** is a read-only Rust engine for Korean HWP/HWPX documents. It renders PDF and PNG
+**Ttoryeot** is a Rust engine for Korean HWP/HWPX documents. It renders PDF and PNG
 with the same layout as Hancom Office (한/글) and extracts plain text or markdown, through a
-command-line tool (`ttoryeot`) and a stdio MCP server (`ttoryeot-mcp`). It has no editor and
-never modifies the source file.
+command-line tool (`ttoryeot`) and a stdio MCP server (`ttoryeot-mcp`). It is not an editor.
+The one edit it makes is replacing a short piece of text in an HWPX and saving a new HWPX with
+all formatting untouched. It never modifies the source file.
 
 ## 무엇을 하나요
 
@@ -17,9 +19,11 @@ never modifies the source file.
 - 암호를 아는 HWP5(EncryptVersion 0·4)·HWPX 문서와 배포용 문서를 엽니다.
 - 문서를 PDF, 쪽 PNG, 평문, markdown으로 내보냅니다.
 - AI 도구가 문서를 읽도록 MCP 서버를 함께 제공합니다.
+- 쪽마다 문단·표·칸·개체·머리말 같은 구성 요소의 이름과 자리를 물을 수 있습니다.
+- HWPX의 짧은 글 한 군데를 서식을 그대로 두고 바꿔 새 HWPX로 저장합니다.
 - 한/글이 내보낸 기준 PDF와 화소·글자·잉크를 자동으로 비교해 수치를 냅니다.
 
-보기 전용입니다. 원본 파일을 고치는 기능은 없습니다.
+원본 파일은 고치지 않습니다. 글 바꾸기도 늘 새 파일에 씁니다.
 
 ## 설치
 
@@ -107,6 +111,7 @@ Claude Desktop, Claude Code 같은 MCP 클라이언트가 문서를 읽을 수 �
 | `read_document_info` | `path` | 형식, 쪽 수, 메타데이터, 사용 글꼴, 암호화 여부 |
 | `extract_text` | `path`, `format`(`plain`, `markdown`), `pages` | 글자 |
 | `render_pdf` | `path`, `output`, `pages` | 새로 만든 PDF의 경로와 크기 |
+| `replace_text` | `path`, `output`, `search`, `replacement`, `occurrence`(선택) | 새로 만든 HWPX의 경로와 바꾼 번째 |
 | `render_page_png` | `path`, `page`, `dpi` | PNG 이미지 |
 | `list_fonts` | `document`(선택) | 찾은 글꼴과 문서가 쓰는 글꼴의 상태 |
 
@@ -132,6 +137,10 @@ claude mcp add ttoryeot -- ttoryeot-mcp --font /path/to/fonts
 
 - `--font`와 `TTORYEOT_PASSWORD`는 선택입니다. 도구 인자로는 암호를 받지 않습니다.
 - `render_pdf`는 확장자가 `.pdf`인 새 파일만 만들고, 있는 파일을 덮어쓰지 않습니다.
+- `replace_text`는 HWPX만 받고 확장자가 `.hwpx`인 새 파일만 만듭니다. 글자 모양, 문단 모양,
+  줄 간격은 그대로 두고 글만 바꿉니다. `search`가 여러 군데에 있으면 전부 바꾸지 않고 번째와
+  앞뒤 글을 알려 주므로, `occurrence`(1부터)를 넣어 다시 부릅니다. 여러 서식에 걸친 글,
+  줄 배치를 정확히 옮길 수 없는 글, 암호·변경 추적 문서는 이유를 적고 거절합니다.
 - 서버는 클라이언트가 건넨 경로의 파일을 서버 권한으로 읽습니다. 믿는 클라이언트에만 연결하세요.
 
 ## 라이브러리로 쓰기
@@ -194,7 +203,8 @@ iOS 기기·시뮬레이터용 XCFramework와 Swift 호출 방법은 [iOS 문서
 | HWP5 EncryptVersion 1~3 | 미지원 | — | 지원하지 않는 버전과 지원 범위를 오류에 적음 |
 | 문서에 내장된 글꼴 | 지원 | 지원 | HWP5 `BinData`·HWPX `isEmbedded`, 메모리 색인, `fsType` 제한 적용 |
 
-- 보기 전용입니다. 읽기, 변환, 텍스트 추출, PDF·PNG 렌더만 하고 저장·편집·주석은 하지 않습니다.
+- 읽기, 변환, 텍스트 추출, PDF·PNG 렌더가 중심입니다. 편집은 HWPX의 짧은 글 바꾸기 하나뿐이고,
+  서식·표·도형 편집과 이진 HWP 쓰기는 하지 않습니다.
 - macOS에서 주로 검증했습니다. Windows·Linux용 실행 파일은 교차 빌드로 만들며, 두 플랫폼 모두
   한/글과의 화면 일치는 아직 확인하지 않았습니다.
 - Windows에서 확인한 범위와 남은 위험은 [Windows 문서](https://github.com/207studio-oss/ttoryeot/blob/main/docs/windows.md)에 적었습니다.

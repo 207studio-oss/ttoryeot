@@ -2,15 +2,18 @@
 //! 줄 배치가 없는 문단만 글자 폭으로 줄을 나눈다. 좌표는 pt, 원점은 쪽 왼쪽 위.
 
 mod object;
+mod record;
 mod table;
 pub(crate) mod text;
 
+use crate::components::{Kind, PageComponents};
 use crate::fonts::{FaceId, FontBook};
 use crate::scene::{self, Item, PathOp};
 use crate::subst::Rules;
 use hwp_core::{
     Bullet, CharPr, Document, LineSeg, Note, Numbering, ParaPr, Paragraph, RunItem, Section, TabPr,
 };
+use record::Flags;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
 use text::{Atom, Style};
@@ -64,6 +67,8 @@ pub(crate) struct Layout {
     pub(crate) paragraphs: Vec<ParagraphSpan>,
     /// 쪽마다 그린 줄의 글자. [`Renderer::recording_text`]를 불렀을 때만 찬다.
     pub(crate) text: Vec<Vec<String>>,
+    /// 쪽마다 배치한 구성 요소. [`Renderer::recording_components`]를 불렀을 때만 찬다.
+    pub(crate) components: Vec<PageComponents>,
 }
 
 /// 최상위 문단 하나가 차지한 쪽 범위(0부터, 끝 포함).
@@ -87,6 +92,7 @@ pub(crate) struct Renderer<'a> {
     pages: Vec<PageOut>,
     paragraph_spans: Vec<ParagraphSpan>,
     records_text: bool,
+    rec: record::Recorder,
     page: Option<usize>,
     /// 지금 그리는 개체가 글 뒤에 놓이는가.
     behind: bool,
@@ -151,6 +157,7 @@ impl<'a> Renderer<'a> {
             pages: Vec::new(),
             paragraph_spans: Vec::new(),
             records_text: false,
+            rec: record::Recorder::default(),
             page: None,
             behind: false,
             object_bottom: 0.0,
@@ -199,6 +206,11 @@ impl<'a> Renderer<'a> {
         self
     }
 
+    pub(crate) fn recording_components(mut self) -> Self {
+        self.rec.on = true;
+        self
+    }
+
     pub(crate) fn layout(mut self) -> Layout {
         self.total_pages = None;
         self.saw_early_total = false;
@@ -209,15 +221,23 @@ impl<'a> Renderer<'a> {
         }
         let sections = &self.doc.sections;
         let track_changes = self.doc.track_changes;
+        let scales: Vec<f32> = self
+            .pages
+            .iter()
+            .map(|page| {
+                sections.get(page.section).map_or(1.0, |section| {
+                    page_scale(track_changes, page.width, section)
+                })
+            })
+            .collect();
+        let components = self.rec.finish(&scales);
         let mut text = Vec::with_capacity(self.pages.len());
         let pages = self
             .pages
             .into_iter()
-            .map(|page| {
+            .zip(scales)
+            .map(|(page, scale)| {
                 text.push(page.text);
-                let scale = sections.get(page.section).map_or(1.0, |section| {
-                    page_scale(track_changes, page.width, section)
-                });
                 let mut items = page.back;
                 items.extend(page.items);
                 scene::Page {
@@ -232,11 +252,13 @@ impl<'a> Renderer<'a> {
             pages,
             paragraphs: self.paragraph_spans,
             text,
+            components,
         }
     }
 
     fn layout_pass(&mut self) {
         self.pages.clear();
+        self.rec.reset();
         self.paragraph_spans.clear();
         self.page = None;
         self.object_bottom = 0.0;
@@ -323,8 +345,12 @@ impl<'a> Renderer<'a> {
             items: Vec::new(),
             text: Vec::new(),
         });
-        self.page = Some(self.pages.len() - 1);
+        let index = self.pages.len() - 1;
+        self.page = Some(index);
         self.floats.clear();
+        let out = &self.pages[index];
+        self.rec
+            .new_page(index, out.width, out.height, Self::rec_body_rect(section));
     }
 
     /// 다음 단으로, `same_page`가 아니거나 남은 단이 없으면 새 쪽 첫 단으로 넘어간다.
@@ -350,6 +376,10 @@ impl<'a> Renderer<'a> {
 
     fn add(&mut self, item: Item) {
         let behind = self.behind;
+        if let Some(page) = self.page {
+            self.rec.observe(&item);
+            self.rec.paint(page, &item);
+        }
         if let Some(page) = self.page.and_then(|index| self.pages.get_mut(index)) {
             if behind {
                 page.back.push(item);
@@ -573,6 +603,16 @@ impl<'a> Renderer<'a> {
                         .find(|master| master.applies == "BOTH")
                 });
             if let Some(master) = master {
+                self.rec.begin(
+                    Kind::MasterPage,
+                    "바탕쪽",
+                    "",
+                    Flags {
+                        behind: true,
+                        ..Flags::default()
+                    },
+                );
+                self.rec_extend(Self::rec_body_rect(section));
                 let (items, back) = {
                     let out = &self.pages[index];
                     (out.items.len(), out.back.len())
@@ -594,47 +634,74 @@ impl<'a> Renderer<'a> {
                 let mut under: Vec<Item> = out.back.drain(back..).collect();
                 under.extend(out.items.drain(items..));
                 out.back.splice(0..0, under);
+                self.rec.end();
             }
-            if !hide.header
-                && let Some(headers) = headers
-            {
-                let mut last_vert = -1.0;
-                for para in headers {
-                    self.layout_paragraph(
-                        para,
-                        (left, pt(page.margin_top)),
-                        width,
-                        section,
-                        false,
-                        &mut last_vert,
-                        None,
-                    );
+            if let Some(headers) = headers {
+                self.rec.begin(
+                    Kind::Header,
+                    "머리말",
+                    "",
+                    Flags {
+                        hidden: hide.header,
+                        ..Flags::default()
+                    },
+                );
+                self.rec_extend(scene::Rect::new(
+                    left,
+                    pt(page.margin_top),
+                    width,
+                    pt(page.header),
+                ));
+                if !hide.header {
+                    let mut last_vert = -1.0;
+                    for para in headers {
+                        self.layout_paragraph(
+                            para,
+                            (left, pt(page.margin_top)),
+                            width,
+                            section,
+                            false,
+                            &mut last_vert,
+                            None,
+                        );
+                    }
                 }
+                self.rec.end();
             }
-            if !hide.footer
-                && let Some(footers) = footers
-            {
+            if let Some(footers) = footers {
                 // 한/글은 꼬리말 칸에 들어가는 내용을 칸 아래에 붙이고, 넘치는 내용은 칸 위에서부터 놓는다.
                 let room = pt(page.footer);
-                let content = self.footer_height(footers, section, left, width);
-                let top = pt(page.height - page.margin_bottom) - room + (room - content).max(0.0);
-                let mut last_vert = -1.0;
-                for para in footers {
-                    self.layout_paragraph(
-                        para,
-                        (left, top),
-                        width,
-                        section,
-                        false,
-                        &mut last_vert,
-                        None,
-                    );
+                let area_top = pt(page.height - page.margin_bottom) - room;
+                self.rec.begin(
+                    Kind::Footer,
+                    "꼬리말",
+                    "",
+                    Flags {
+                        hidden: hide.footer,
+                        ..Flags::default()
+                    },
+                );
+                self.rec_extend(scene::Rect::new(left, area_top, width, room));
+                if !hide.footer {
+                    let content = self.footer_height(footers, section, left, width);
+                    let top = area_top + (room - content).max(0.0);
+                    let mut last_vert = -1.0;
+                    for para in footers {
+                        self.layout_paragraph(
+                            para,
+                            (left, top),
+                            width,
+                            section,
+                            false,
+                            &mut last_vert,
+                            None,
+                        );
+                    }
                 }
+                self.rec.end();
             }
-            if !hide.page_num
-                && let Some(spec) = current_page_num
-            {
-                self.draw_page_number(spec, number, section);
+            if let Some(spec) = current_page_num {
+                self.draw_page_number(spec, number, section, !hide.page_num);
             }
             self.display_page_number = None;
             self.page = saved;
@@ -646,6 +713,7 @@ impl<'a> Renderer<'a> {
         (pos, format, side): (&str, &str, &str),
         number: i64,
         section: &Section,
+        visible: bool,
     ) {
         // 번호 위치 '없음'은 쪽 번호를 찍지 않는다.
         if pos == "NONE" {
@@ -684,7 +752,25 @@ impl<'a> Renderer<'a> {
         } else {
             left
         };
-        self.emit(&line, x, baseline);
+        self.rec.begin(
+            Kind::PageNumber,
+            "쪽 번호",
+            &record::snippet(&content),
+            Flags {
+                hidden: !visible,
+                ..Flags::default()
+            },
+        );
+        self.rec_extend(scene::Rect::new(
+            x,
+            baseline - height * 0.8,
+            natural,
+            height,
+        ));
+        if visible {
+            self.emit(&line, x, baseline);
+        }
+        self.rec.end();
     }
 
     fn record_footnote(&mut self, note: &'a Note, section: &Section) {
@@ -802,6 +888,12 @@ impl<'a> Renderer<'a> {
                 for ((note, _, _), height) in in_column.iter().zip(&heights) {
                     let mut last_vert = -1.0;
                     self.current_note = Some(text::note_number_text(note));
+                    self.rec.begin(
+                        Kind::Footnote,
+                        "각주",
+                        &record::snippet(&text::note_number_text(note)),
+                        Flags::default(),
+                    );
                     for para in &note.paragraphs {
                         self.layout_paragraph(
                             para,
@@ -813,6 +905,7 @@ impl<'a> Renderer<'a> {
                             None,
                         );
                     }
+                    self.rec.end();
                     self.current_note = None;
                     y += height + between;
                 }
@@ -825,6 +918,45 @@ impl<'a> Renderer<'a> {
     /// 다음 단·쪽의 위로 옮겨, 저장된 줄처럼 세로 위치가 되돌아가는 곳에서 단·쪽을 넘긴다.
     #[allow(clippy::too_many_arguments)]
     fn layout_paragraph(
+        &mut self,
+        para: &'a Paragraph,
+        origin: (f32, f32),
+        avail_width: f32,
+        section: &'a Section,
+        breakable: bool,
+        last_vert: &mut f64,
+        lines: Option<&BTreeSet<usize>>,
+    ) {
+        if !self.rec.on {
+            self.paragraph_lines(
+                para,
+                origin,
+                avail_width,
+                section,
+                breakable,
+                last_vert,
+                lines,
+            );
+            return;
+        }
+        let text = record::paragraph_text(para);
+        self.rec
+            .begin(Kind::Paragraph, "문단", &text, Flags::default());
+        self.paragraph_lines(
+            para,
+            origin,
+            avail_width,
+            section,
+            breakable,
+            last_vert,
+            lines,
+        );
+        self.rec.markers(&record::controls(para));
+        self.rec.end();
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn paragraph_lines(
         &mut self,
         para: &'a Paragraph,
         origin: (f32, f32),
@@ -1143,6 +1275,16 @@ impl<'a> Renderer<'a> {
             }
             let ends_with_break = line_atoms.last().is_some_and(|atom| atom.ch == '\n');
             let x = text::align(&mut line, pp, x0, avail, is_last || ends_with_break);
+            self.rec_extend(scene::Rect::new(
+                origin.0 + shift + pt(seg.horzpos),
+                line_top,
+                if seg.horzsize > 1.0 {
+                    pt(seg.horzsize)
+                } else {
+                    avail_width
+                },
+                pt(seg.vertsize),
+            ));
             // 한/글은 문단 머리와 본문을 한 덩어리로 정렬하므로, 머리는 정렬된 본문 바로 앞에 붙는다.
             if let Some(head) = line_head
                 && is_first

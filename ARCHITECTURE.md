@@ -90,6 +90,25 @@ ttoryeot-cli, ttoryeot-mcp, ttoryeot-ffi ──▶ ttoryeot-alloc
 
 파서는 16MB 스택을 가진 스레드에서 돌고, 패닉은 `Fatal::Internal`로 바꿉니다.
 
+## 글 바꾸기
+
+`hwp_core::hwpx::edit`은 HWPX의 짧은 글 한 군데를 바꿔 HWPX 바이트로 돌려줍니다. 화면도
+플랫폼 코드도 없습니다. MCP `replace_text`가 이 함수를 부릅니다.
+
+1. **찾기** — `find_text`가 구역 XML을 훑어 `hp:t` 하나 안에 이어진 글에서만 일치를 셉니다.
+   탭, 줄바꿈 같은 자식 요소가 글을 끊습니다. 일치는 문서 순서로 1번부터 셉니다.
+2. **바꾸기** — `replace_text`는 일치가 하나일 때만 바꿉니다. 여럿이면 `Ambiguous`로 멈추고,
+   `occurrence`를 주면 그 번째만 바꿉니다. 여러 서식에 걸친 글은 `SpansRuns`로 거절하고,
+   한 조각 안에 하나 있으면서 서식이 나뉜 곳에도 같은 글이 있으면 `AlsoSpansRuns`로 멈춥니다.
+3. **XML** — 구역 XML을 다시 쓰지 않고 글 바이트 구간만 바꿉니다. 글자 속성, 문단 속성,
+   줄 간격 속성은 바이트 그대로입니다. 글 길이가 달라져 같은 문단의 줄 시작 위치(`textpos`)를
+   옮겨야 하는데 정확히 셀 수 없으면 `LayoutBound`로 거절합니다. 글을 맞추려고 서식을 고치지
+   않습니다.
+4. **컨테이너** — 고친 구역만 새로 압축하고 나머지 항목은 압축된 바이트 그대로 복사합니다.
+   CRC, 크기, 중앙 디렉터리를 다시 쓴 뒤 `parse`로 읽어 보고 통과해야 돌려줍니다.
+5. **거절** — 암호 문서, 변경 추적이 있는 문서, 제어 문자가 든 바꿀 글은 고치지 않습니다.
+   이진 HWP는 쓰지 않습니다.
+
 ## 렌더러
 
 1. **글꼴** — `FontBook`이 글꼴 파일의 이름표만 먼저 읽고, 실제로 쓰는 얼굴만 메모리에 올립니다.
@@ -108,6 +127,13 @@ ttoryeot-cli, ttoryeot-mcp, ttoryeot-ffi ──▶ ttoryeot-alloc
 4. **장면** — `Page`마다 그릴 것(`Glyphs`, `Fill`, `Stroke`, `Image`, `Clip`, `Transform`)을
    순서대로 담습니다. 좌표 단위는 pt입니다.
 5. **PDF** — krilla로 장면을 씁니다. 글꼴은 쓰인 글자만 부분 집합으로 넣습니다.
+6. **구성 요소** — 요청할 때만(`render_with_components`, `to_pdf_with_components`) 배치가 그리면서
+   쪽마다 문단·표·칸·그림·도형·수식·머리말·꼬리말·바탕쪽·쪽 번호·각주·캡션의 자리를 함께
+   적습니다. 쪽 배율을 곱한 pt 좌표이고 원점은 `Page`와 같습니다. 그리지 않은 요소와 감춘 머리말,
+   글 뒤 개체, 쪽 밖 개체, 자리 없는 컨트롤(문단 왼쪽 바깥의 작은 표식)도 `ink`, `hidden`,
+   `behind`로 가려 담습니다. 이름은 문서 모델에서 오며 그린 그림을 읽지 않습니다. 켜지 않으면
+   기록은 하지 않고 PDF 출력은 그대로입니다. `ttoryeot::components`의 `at`, `in_rect`, `path`로
+   점, 영역, 경로를 묻습니다.
 
 ## 채점기
 
@@ -129,6 +155,7 @@ ttoryeot-cli, ttoryeot-mcp, ttoryeot-ffi ──▶ ttoryeot-alloc
 
 ## 정하지 않은 것
 
-- 편집·저장·주석
+- 글 바꾸기 밖의 편집(서식, 줄 간격, 표, 도형)과 PDF 저장
+- 이진 HWP 쓰기
 - HWP 3.0과 HWPML
 - 앱 UI

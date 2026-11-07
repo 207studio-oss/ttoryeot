@@ -39,10 +39,10 @@ OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ### GNU Affero General Public License v3.0 only
 
-- ttoryeot-hwp-core 0.1.0
-- ttoryeot 0.1.0
-- ttoryeot-cli 0.1.0
-- ttoryeot-mcp 0.1.0
+- ttoryeot-hwp-core 0.2.0
+- ttoryeot 0.2.0
+- ttoryeot-cli 0.2.0
+- ttoryeot-mcp 0.2.0
 
 ```text
 GNU AFFERO GENERAL PUBLIC LICENSE
@@ -285,7 +285,7 @@ You should also get your employer (if you work as a programmer) or school, if an
 
 ### Apache License 2.0
 
-- ttoryeot-alloc 0.1.0
+- ttoryeot-alloc 0.2.0
 - cmov 0.5.4
 - ctutils 0.4.7
 - kurbo 0.13.1
