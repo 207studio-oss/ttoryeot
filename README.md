@@ -25,7 +25,66 @@ all formatting untouched. It never modifies the source file.
 
 원본 파일은 고치지 않습니다. 글 바꾸기도 늘 새 파일에 씁니다.
 
-## 설치
+## 받는 법
+
+또렷은 창이 뜨는 앱이 아닙니다. 터미널에서 쓰는 명령줄 도구 `ttoryeot`와, Claude Desktop·Claude Code
+같은 AI 도구가 부르는 MCP 서버 `ttoryeot-mcp` 두 실행 파일입니다. 설치한 뒤에는 명령 프롬프트,
+PowerShell, 터미널에서 `ttoryeot --help`로 시작합니다.
+
+미리 빌드한 파일은 [Releases](https://github.com/207studio-oss/ttoryeot/releases)에서 운영체제에 맞는
+것 하나를 받습니다. 모든 파일에 두 실행 파일이 함께 들어 있고, `SHA256SUMS`로 내려받은 파일을 확인할 수 있습니다.
+
+| 운영체제 | 받을 파일 |
+|---|---|
+| Windows 10·11 (64비트) | `ttoryeot-<버전>-windows-x64-setup.exe` (설치 파일, 권장) 또는 `ttoryeot-<버전>-windows-x64.zip` (압축만 푸는 휴대용) |
+| macOS, Apple 실리콘(M1 이후) | `ttoryeot-<버전>-macos-apple-silicon.tar.gz` |
+| macOS, Intel | `ttoryeot-<버전>-macos-intel.tar.gz` |
+| Linux x86_64 (glibc 2.17 이상) | `ttoryeot-<버전>-linux-x64.tar.gz` |
+
+### Windows
+
+**설치 파일(권장).** `windows-x64-setup.exe`를 실행합니다. 관리자 권한 없이 지금 사용자에게만
+`%LOCALAPPDATA%\Programs\ttoryeot`에 설치하고, 그 폴더를 사용자 `Path`에 더합니다. 설치가 끝나면
+**새로** 연 명령 프롬프트나 PowerShell에서 `ttoryeot --help`가 됩니다. 시작 메뉴의 `또렷 (ttoryeot)`
+폴더에는 README와 제거 바로 가기만 있습니다. 지울 때는 설정 › 앱 › 설치된 앱에서 `또렷 (ttoryeot)`을
+제거합니다. 제거하면 설치가 더한 `Path` 항목 하나만 빠지고 다른 항목은 그대로 둡니다.
+
+**휴대용 zip.** 설치하지 않고 쓰려면 `windows-x64.zip`을 원하는 폴더에 풀고 그 폴더에서 `.\ttoryeot.exe`를
+실행합니다. 어디서나 부르려면 그 폴더를 직접 `Path`에 넣으세요.
+
+설치 파일과 실행 파일은 Windows 코드 서명을 하지 않았습니다. 그래서 처음 실행할 때 Microsoft Defender
+SmartScreen이 "Windows의 PC 보호" 창을 띄울 수 있습니다. 받은 파일의 `SHA256SUMS` 값을 확인했다면
+**추가 정보**를 누른 뒤 **실행**을 누릅니다. PowerShell에서는 다음과 같이 해시를 봅니다.
+
+```powershell
+Get-FileHash .\ttoryeot-v0.3.0-windows-x64-setup.exe -Algorithm SHA256
+```
+
+### macOS
+
+Mac의 칩에 맞는 파일을 받습니다. Apple 메뉴 › **이 Mac에 관하여**에서 "칩"이 Apple M1·M2 같은
+이름이면 Apple 실리콘(`macos-apple-silicon`), "프로세서"가 Intel이면 `macos-intel`입니다. 터미널에서
+`uname -m`이 `arm64`이면 Apple 실리콘, `x86_64`이면 Intel입니다.
+
+macOS 실행 파일은 Developer ID로 서명하고 Apple 공증을 받았습니다. 풀어서 `PATH`에 있는 폴더로 옮깁니다.
+
+```bash
+tar -xzf ttoryeot-v0.3.0-macos-apple-silicon.tar.gz
+sudo install -m 755 ttoryeot-v0.3.0-macos-apple-silicon/ttoryeot* /usr/local/bin/
+ttoryeot --help
+```
+
+### Linux
+
+x86_64용 하나이고 glibc 2.17 이상(대부분의 배포판)에서 돕니다. Arm Linux용은 아직 없으니
+아래처럼 소스에서 설치하세요.
+
+```bash
+tar -xzf ttoryeot-v0.3.0-linux-x64.tar.gz
+sudo install -m 755 ttoryeot-v0.3.0-linux-x64/ttoryeot* /usr/local/bin/
+```
+
+### 소스에서 설치
 
 `ttoryeot`(명령줄)와 `ttoryeot-mcp`(MCP 서버)는 별개 실행 파일입니다. 필요한 것만 설치하세요.
 
@@ -34,12 +93,7 @@ cargo install ttoryeot-cli --locked
 cargo install ttoryeot-mcp --locked
 ```
 
-Rust 1.99 이상이 필요합니다.
-미리 빌드한 실행 파일은 [Releases](https://github.com/207studio-oss/ttoryeot/releases)에서 받습니다.
-macOS(arm64, x86_64), Linux(x86_64), Windows(x86_64)용 압축 파일에 두 실행 파일이 함께 들어 있습니다.
-`SHA256SUMS`로 내려받은 파일을 확인할 수 있습니다.
-
-저장소에서 직접 빌드하려면 다음과 같이 합니다.
+Rust 1.99 이상이 필요합니다. 저장소에서 직접 빌드하려면 다음과 같이 합니다.
 
 ```bash
 cargo build --release -p ttoryeot-cli -p ttoryeot-mcp

@@ -58,8 +58,8 @@ ttoryeot-cli, ttoryeot-mcp, ttoryeot-ffi ──▶ ttoryeot-alloc
 
 | 모듈 | 디렉터리 | 지우는 법 |
 |---|---|---|
-| CLI | `ttoryeot-cli/` | 디렉터리를 지우고 `tools/release-local.sh`에서 CLI 빌드를 뺍니다 |
-| MCP | `ttoryeot-mcp/` | 디렉터리를 지우고 `tools/release-local.sh`에서 MCP 빌드를 뺍니다 |
+| CLI | `ttoryeot-cli/` | 디렉터리를 지우고 `tools/release-local.sh`와 `tools/windows/ttoryeot-setup.nsi`에서 CLI를 뺍니다 |
+| MCP | `ttoryeot-mcp/` | 디렉터리를 지우고 `tools/release-local.sh`와 `tools/windows/ttoryeot-setup.nsi`에서 MCP를 뺍니다 |
 | FFI·iOS | `ttoryeot-ffi/` | 디렉터리를 지웁니다 |
 | 채점기 | `ttoryeot-score/` | 디렉터리를 지웁니다 |
 | 할당자 | `ttoryeot-alloc/` | CLI, MCP, FFI의 등록을 뺀 뒤 디렉터리를 지웁니다 |

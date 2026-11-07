@@ -2,7 +2,8 @@
 
 ## 빌드
 
-Windows x86_64 실행 파일은 macOS·Linux에서 mingw-w64로 교차 빌드합니다(`tools/release-local.sh`).
+Windows x86_64 실행 파일은 macOS·Linux에서 mingw-w64로 교차 빌드하고, 같은 스크립트가 NSIS로 설치
+파일도 만듭니다(`tools/release-local.sh`).
 실행 파일은 Windows 10 이상에 기본으로 있는 DLL만 씁니다. Windows에서 바로 빌드하려면 아래 명령을 씁니다.
 
 ## 이 PC에서 확인한 것
@@ -53,7 +54,8 @@ cargo run -q -p ttoryeot-cli -- fonts --json
 - 실제 말뭉치 문서의 화면 일치(쪽 나눔·글자 위치). README의 Windows 수치는 다른 실행
   환경에서 잰 값이며, 이 PC에서 다시 측정하지 않았습니다.
 - 한/글 2024와 같은 글꼴 조합에서의 인쇄 결과와 문서 내장 글꼴.
-- Windows 릴리스 묶음·코드 서명·SmartScreen 동작. 지금은 소스에서 빌드해야 합니다.
+- Windows 코드 서명. 설치 파일(`windows-x64-setup.exe`)과 휴대용 zip은 서명하지 않아 SmartScreen이
+  경고합니다. 설치 파일은 macOS에서 NSIS로 교차로 만들며, 설치·`Path`·제거 동작은 [릴리스 문서](releasing.md)에 적었습니다.
 
 빌드와 시험이 통과해도 한/글과 같은 모양을 보장하지는 않습니다. 글꼴이 다르면 쪽 나눔이
 달라질 수 있으므로, 화면 일치가 중요한 문서는 [글꼴 문서](fonts.md)를 보고 같은 글꼴을

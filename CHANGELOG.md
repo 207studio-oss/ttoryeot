@@ -1,5 +1,19 @@
 # 변경 기록
 
+## 아직 배포하지 않음
+
+### 받기 파일
+
+- 릴리스 받기 파일 이름에 운영체제를 적었습니다. `windows-x64`, `macos-apple-silicon`,
+  `macos-intel`, `linux-x64`로 나누어, 대상 삼중항(`aarch64-apple-darwin` 등)을 몰라도 고를 수 있습니다.
+- Windows 설치 파일 `ttoryeot-<버전>-windows-x64-setup.exe`를 더했습니다. 관리자 권한 없이
+  `%LOCALAPPDATA%\Programs\ttoryeot`에 설치하고 사용자 `Path`에 그 폴더를 더하며, 제거하면 그 항목만
+  뺍니다. 설정의 앱 목록과 시작 메뉴에 제거 항목이 생깁니다. 코드 서명은 하지 않았습니다.
+  휴대용 zip도 계속 냅니다.
+- README의 받는 법을 운영체제별로 나누었습니다. 또렷이 창이 있는 앱이 아니라 명령줄 도구와 MCP
+  서버라는 점, Windows SmartScreen 경고를 넘기는 방법, Mac 칩 확인 방법을 적었습니다.
+- 릴리스 스크립트가 실행 파일에 빌드한 컴퓨터의 경로가 남지 않도록 `--remap-path-prefix`를 넣습니다.
+
 ## 0.2.0 (2026-11-08)
 
 ### 구성 요소 질의
