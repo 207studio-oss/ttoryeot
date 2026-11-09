@@ -301,7 +301,14 @@ impl<'a> Renderer<'a> {
             self.column_step = self.column_width + gap;
             let mut last_vert = -1.0;
             self.para_bottom = 0.0;
+            let mut after_flowed = false;
             for (paragraph, para) in section.paragraphs.iter().enumerate() {
+                // 줄 배치가 없어 글자 폭으로 나눈 문단(글자 수를 바꿔 줄 배치를 지운 문단 등) 뒤의 저장된 문단은
+                // 저장된 자리가 아니라 그 문단의 실제 아래에 쌓는다. 그러지 않으면 늘어난 줄과 겹친다.
+                if after_flowed && !para.line_segs.is_empty() {
+                    self.stacked_bottom = Some(self.para_bottom + self.stack_shift);
+                }
+                after_flowed = para.line_segs.is_empty();
                 let start = self.pages.len() - 1;
                 let drawn = self.drawn_items(start);
                 self.layout_paragraph(
@@ -942,6 +949,8 @@ impl<'a> Renderer<'a> {
         let text = record::paragraph_text(para);
         self.rec
             .begin(Kind::Paragraph, "문단", &text, Flags::default());
+        self.rec
+            .set_content(record::paragraph_content(para), para.origin);
         self.paragraph_lines(
             para,
             origin,

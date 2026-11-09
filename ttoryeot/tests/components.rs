@@ -472,3 +472,63 @@ fn recording_does_not_change_what_is_drawn() {
         assert_eq!((a.width, a.height, a.scale), (b.width, b.height, b.scale));
     }
 }
+
+#[test]
+fn paragraphs_carry_their_whole_text_beside_the_short_summary() {
+    let long =
+        "가정에서도 일정을 살펴보시고 아이들이 준비물을 잘 챙길 수 있도록 도와주시기 바랍니다.";
+    let doc = document(vec![
+        paragraph(vec![
+            RunItem::Text("앞 ".to_string()),
+            RunItem::Text(long.to_string()),
+        ]),
+        text("짧은 문단"),
+    ]);
+    let pages = components(&doc);
+    let paragraphs = find(&pages[0], Kind::Paragraph);
+    assert_eq!(paragraphs.len(), 2);
+    assert_eq!(paragraphs[0].content, format!("앞 {long}"));
+    assert!(paragraphs[0].text.ends_with('…'));
+    assert!(paragraphs[0].text.chars().count() <= 25);
+    assert_eq!(paragraphs[1].content, "짧은 문단");
+    let bodies = find(&pages[0], Kind::Body);
+    assert!(bodies.iter().all(|body| body.content.is_empty()));
+}
+
+#[test]
+fn paragraph_lists_every_character_box_in_order_inside_its_bounds() {
+    // 글 조각 둘 사이에 탭이 끼어도 글자 차례는 글 조각만 이은 `content` 기준이다.
+    let doc = document(vec![paragraph(vec![
+        RunItem::Text("AB CD".to_string()),
+        RunItem::Tab,
+        RunItem::Text("EF".to_string()),
+    ])]);
+    let pages = components(&doc);
+    let para = find(&pages[0], Kind::Paragraph)
+        .into_iter()
+        .find(|c| c.content == "AB CDEF")
+        .expect("paragraph");
+    let indices: Vec<u32> = para.chars.iter().map(|c| c.index).collect();
+    assert_eq!(indices, (0..7).collect::<Vec<u32>>());
+    for pair in para.chars.windows(2) {
+        assert!(pair[1].rect.x >= pair[0].rect.x, "{pair:?}");
+    }
+    let (a, e) = (para.chars[0].rect, para.chars[5].rect);
+    assert!(e.x - a.right() > 10.0, "the tab leaves a gap: {a:?} {e:?}");
+    for char in &para.chars {
+        let r = char.rect;
+        assert!(r.height > 5.0 && r.width > 0.0, "{r:?}");
+        assert!(
+            para.bounds.x - 0.5 <= r.x && r.right() <= para.bounds.right() + 0.5,
+            "{r:?} in {:?}",
+            para.bounds
+        );
+    }
+    for other in pages[0]
+        .components
+        .iter()
+        .filter(|c| c.kind != Kind::Paragraph)
+    {
+        assert!(other.chars.is_empty(), "{:?}", other.kind);
+    }
+}

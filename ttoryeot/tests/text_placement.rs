@@ -1031,3 +1031,45 @@ fn installed_font_keeps_hancom_letter_spacing_squeeze() {
     let run = stored_line_run("Liberation Sans", 15000.0);
     assert_eq!(run.scale_x, 1.0);
 }
+
+#[test]
+fn stored_paragraph_after_a_reflowed_one_starts_below_it() {
+    // 글자 수를 바꿔 줄 배치를 지운 문단은 글자 폭으로 여러 줄이 된다. 뒤 문단의 저장된 자리는 옛 한 줄을
+    // 기준으로 하므로 그대로 쓰면 겹친다. 뒤 문단은 앞 문단의 실제 아래에서 시작해야 한다.
+    let line = |vertpos: f64| LineSeg {
+        textpos: 0,
+        vertpos,
+        vertsize: 1000.0,
+        textheight: 1000.0,
+        baseline: 850.0,
+        spacing: 600.0,
+        horzpos: 0.0,
+        horzsize: 42520.0,
+        flags: 0,
+    };
+    let mut doc = one_line(0.0, vec![RunItem::Text("AAAA ".repeat(60))]);
+    let mut next = doc.sections[0].paragraphs[0].clone();
+    next.runs[0].items = vec![RunItem::Text("BBBB".to_string())];
+    next.line_segs = vec![line(1600.0)];
+    doc.sections[0].paragraphs.push(next);
+
+    let page = first_page(&doc);
+    let lines = |letter: char| -> Vec<f32> {
+        let mut ys: Vec<f32> = page
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Glyphs(run) if run.text.starts_with(letter) => Some(run.origin.1),
+                _ => None,
+            })
+            .collect();
+        ys.dedup_by(|a, b| (*a - *b).abs() < 0.01);
+        ys
+    };
+    let (first, second) = (lines('A'), lines('B'));
+    assert!(first.len() >= 3, "reflowed lines {first:?}");
+    let last_a = first.iter().copied().fold(f32::MIN, f32::max);
+    let b = second[0];
+    // 한 줄 높이(10pt) + 줄 간격(6pt) 아래에 온다.
+    assert!((b - last_a - 16.0).abs() < 0.5, "A ends {last_a}, B at {b}");
+}

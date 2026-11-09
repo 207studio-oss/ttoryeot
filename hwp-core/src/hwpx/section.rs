@@ -2,7 +2,8 @@ use crate::hwp5::docinfo::SHAPE_LINE_TYPES;
 use crate::hwp5::table::normalize_grid;
 use crate::model::{
     Caption, Cell, ColumnDef, Compose, Equation, HwpUnit, LineSeg, Margins, MasterPage, Note,
-    NoteShape, Page, Paragraph, Picture, Pos, Run, RunItem, Section, Shape, Tab, Table,
+    NoteShape, Page, Paragraph, ParagraphOrigin, Picture, Pos, Run, RunItem, Section, Shape, Tab,
+    Table,
 };
 use crate::report::{Warning, WarningKind};
 use crate::{FIXED_SPACE, NO_BREAK_SPACE};
@@ -24,6 +25,8 @@ struct Parser<'a> {
     depth: usize,
     max_depth: usize,
     nesting_warned: bool,
+    /// 바탕쪽(다른 XML 파일)을 읽는 중이면 문단 자리를 적지 않는다.
+    in_master_page: bool,
 }
 
 /// 구역 XML을 문단 단위로 읽어 구역과 변경 추적 표시 유무를 돌려준다. 잘못된 XML이면 `None`이고
@@ -46,6 +49,7 @@ pub(super) fn read_section(
         depth: 0,
         max_depth,
         nesting_warned: false,
+        in_master_page: false,
     };
     let mut paragraphs = Vec::new();
     let mut track_changes = false;
@@ -105,6 +109,7 @@ fn parse_section(
         depth: 0,
         max_depth,
         nesting_warned: root.depth_limited,
+        in_master_page: false,
     };
     let paragraphs = root
         .all("p")
@@ -143,6 +148,10 @@ impl Parser<'_> {
             style_id: narrow(node.int("styleIDRef").unwrap_or(0)),
             page_break: node.bool("pageBreak"),
             column_break: node.bool("columnBreak"),
+            origin: match (self.in_master_page, self.section_index, node.ordinal) {
+                (false, Some(section), Some(ordinal)) => Some(ParagraphOrigin { section, ordinal }),
+                _ => None,
+            },
             ..Paragraph::default()
         };
         let mut markpens = Markpens::default();
@@ -251,7 +260,9 @@ impl Parser<'_> {
             let Some(root) = reference.attr("idRef").and_then(|id| master_pages.get(id)) else {
                 continue;
             };
+            self.in_master_page = true;
             let paragraphs = self.sub_list_paragraphs(root);
+            self.in_master_page = false;
             self.section.master_pages.push(MasterPage {
                 applies: root.attr("type").unwrap_or("BOTH").to_string(),
                 paragraphs,

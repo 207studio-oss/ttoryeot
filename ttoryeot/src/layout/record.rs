@@ -4,9 +4,9 @@
 //! 노드는 그 쪽에서 처음 자리나 그린 것이 생길 때 만들어진다. 자리를 한 번도 얻지 못한 노드는 버린다.
 
 use super::{Renderer, pt};
-use crate::components::{Component, Kind, PageComponents};
+use crate::components::{CharBox, Component, Kind, PageComponents};
 use crate::scene::{Item, Rect};
-use hwp_core::{Paragraph, RunItem, Shape};
+use hwp_core::{Paragraph, ParagraphOrigin, RunItem, Shape};
 use std::collections::HashMap;
 
 const IDENTITY: [f32; 6] = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
@@ -28,6 +28,8 @@ struct Frame {
     kind: Kind,
     name: String,
     text: String,
+    content: String,
+    origin: Option<ParagraphOrigin>,
     flags: Flags,
     nodes: HashMap<usize, usize>,
 }
@@ -36,11 +38,14 @@ struct Node {
     kind: Kind,
     name: String,
     text: String,
+    content: String,
+    origin: Option<ParagraphOrigin>,
     parent: Option<usize>,
     bounds: Option<Rect>,
     derived: bool,
     ink: bool,
     flags: Flags,
+    chars: Vec<CharBox>,
 }
 
 struct PageNodes {
@@ -116,6 +121,21 @@ pub(crate) fn paragraph_text(para: &Paragraph) -> String {
         }
     }
     snippet(&text)
+}
+
+/// 문단의 글 전체. 줄 바꿈은 `\n`으로 넣고, 탭·개체 같은 글 아닌 항목은 넣지 않는다.
+pub(crate) fn paragraph_content(para: &Paragraph) -> String {
+    let mut text = String::new();
+    for run in &para.runs {
+        for item in &run.items {
+            match item {
+                RunItem::Text(piece) => text.push_str(piece),
+                RunItem::LineBreak => text.push('\n'),
+                _ => {}
+            }
+        }
+    }
+    text
 }
 
 fn shape_name(shape: &Shape) -> String {
@@ -200,11 +220,14 @@ impl Recorder {
             kind,
             name,
             text: String::new(),
+            content: String::new(),
+            origin: None,
             parent,
             bounds: Some(bounds),
             derived: false,
             ink: false,
             flags: page_flags,
+            chars: Vec::new(),
         };
         let page = node(
             Kind::Page,
@@ -226,6 +249,8 @@ impl Recorder {
                 kind,
                 name: name.to_string(),
                 text: text.to_string(),
+                content: String::new(),
+                origin: None,
                 flags,
                 nodes: HashMap::new(),
             });
@@ -235,6 +260,16 @@ impl Recorder {
     pub(crate) fn end(&mut self) {
         if self.on {
             self.stack.pop();
+        }
+    }
+
+    /// 지금 틀(문단)의 글 전체를 적는다. 글을 고치는 쪽이 요약(`text`) 대신 읽는다.
+    pub(crate) fn set_content(&mut self, content: String, origin: Option<ParagraphOrigin>) {
+        if self.on
+            && let Some(frame) = self.stack.last_mut()
+        {
+            frame.content = content;
+            frame.origin = origin;
         }
     }
 
@@ -293,11 +328,14 @@ impl Recorder {
             kind: frame.kind,
             name: frame.name.clone(),
             text: frame.text.clone(),
+            content: frame.content.clone(),
+            origin: frame.origin,
             parent: Some(parent),
             bounds: None,
             derived: false,
             ink: false,
             flags: frame.flags,
+            chars: Vec::new(),
         };
         let nodes = &mut self.pages.get_mut(page)?.nodes;
         nodes.push(node);
@@ -323,6 +361,36 @@ impl Recorder {
         let node = &mut self.pages[page].nodes[id];
         node.bounds = Some(node.bounds.map_or(rect, |bounds| union(bounds, rect)));
         node.derived = false;
+    }
+
+    /// 지금 문단 틀에 글자 자리를 더한다. `boxes`는 (글자 차례, 쪽 위 칸)이다.
+    pub(crate) fn chars(&mut self, page: usize, boxes: &[(u32, Rect)]) {
+        if !self.on || boxes.is_empty() {
+            return;
+        }
+        let Some(depth) = self
+            .stack
+            .iter()
+            .rposition(|frame| frame.kind == Kind::Paragraph)
+        else {
+            return;
+        };
+        let mapped: Vec<CharBox> = boxes
+            .iter()
+            .filter(|(_, rect)| {
+                [rect.x, rect.y, rect.width, rect.height]
+                    .iter()
+                    .all(|v| v.is_finite())
+            })
+            .map(|&(index, rect)| CharBox {
+                index,
+                rect: self.mapped(rect),
+            })
+            .collect();
+        let Some(id) = self.ensure(page, depth) else {
+            return;
+        };
+        self.pages[page].nodes[id].chars.extend(mapped);
     }
 
     pub(crate) fn paint(&mut self, page: usize, item: &Item) {
@@ -376,6 +444,8 @@ impl Recorder {
                 kind: Kind::Control,
                 name,
                 text: String::new(),
+                content: String::new(),
+                origin: None,
                 parent: Some(id),
                 bounds: Some(Rect::new(
                     (anchor.x - MARKER - 2.0).max(0.0),
@@ -389,6 +459,7 @@ impl Recorder {
                     hidden: true,
                     ..Flags::default()
                 },
+                chars: Vec::new(),
             });
         }
     }
@@ -439,6 +510,19 @@ fn finish_page(page: PageNodes, scale: f32) -> PageComponents {
         }
         let parent = node.parent.and_then(|parent| remap[parent]);
         let depth = parent.map_or(0, |parent| components[parent].depth + 1);
+        let chars = node
+            .chars
+            .iter()
+            .map(|char| CharBox {
+                index: char.index,
+                rect: Rect::new(
+                    char.rect.x * scale,
+                    char.rect.y * scale,
+                    char.rect.width * scale,
+                    char.rect.height * scale,
+                ),
+            })
+            .collect();
         let off_page =
             bounds.right() < 0.0 || bounds.bottom() < 0.0 || bounds.x > width || bounds.y > height;
         remap[index] = Some(components.len());
@@ -449,11 +533,14 @@ fn finish_page(page: PageNodes, scale: f32) -> PageComponents {
             kind: node.kind,
             name: node.name,
             text: node.text,
+            content: node.content,
+            origin: node.origin,
             bounds,
             ink: node.ink,
             floating: node.flags.floating,
             behind: node.flags.behind,
             hidden: node.flags.hidden || off_page,
+            chars,
         });
     }
     PageComponents {

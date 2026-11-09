@@ -1,10 +1,10 @@
 #[path = "support/mod.rs"]
 mod support;
 
-use hwp_core::hwpx::edit::{find_text, replace_text, EditError};
+use hwp_core::hwpx::edit::{fill_empty_paragraph, find_text, replace_text, EditError};
 use hwp_core::hwpx::zip::MiniZip;
 use hwp_core::model::RunItem;
-use hwp_core::{parse, ParseOptions};
+use hwp_core::{parse, ParagraphOrigin, ParseOptions};
 
 use support::odfcrypt;
 use support::zipw::{self, Entry};
@@ -144,22 +144,20 @@ fn fixes_a_misspelled_name_and_changes_nothing_else() {
 }
 
 #[test]
-fn changes_a_number_to_a_longer_string_without_touching_styles_or_line_spacing() {
+fn changes_a_number_to_a_longer_string_without_touching_styles() {
     let before = section(&format!("{}{}", name_paragraph(), score_paragraph()));
     let bytes = package(&before);
 
     let edited = replace_text(&bytes, "67", "6.7", None).expect("replace");
 
     let after = read(&edited, "Contents/section0.xml");
-    assert_eq!(after, before.replace("67", "6.7"));
+    // 글자 수가 바뀐 점수 문단만 줄 배치를 지운다. 이름 문단의 줄 배치는 그대로다.
+    let (head, tail) = before.rsplit_once(LINE).expect("score line layout");
+    assert_eq!(after, format!("{head}{tail}").replace("67", "6.7"));
     for attribute in [
         r#"paraPrIDRef="8""#,
         r#"styleIDRef="0""#,
         r#"charPrIDRef="13""#,
-        r#"spacing="600""#,
-        r#"vertsize="1000""#,
-        r#"horzsize="42520""#,
-        r#"flags="393216""#,
     ] {
         assert_eq!(
             after.matches(attribute).count(),
@@ -338,7 +336,7 @@ fn reports_missing_and_run_spanning_text() {
         Err(EditError::InvalidReplacement)
     );
     assert_eq!(
-        replace_text(&bytes, "A", "C\nD", None),
+        replace_text(&bytes, "A", "C\u{7}D", None),
         Err(EditError::InvalidReplacement)
     );
 }
@@ -353,7 +351,11 @@ fn keeps_entities_and_cdata_valid() {
     let edited = replace_text(&bytes, "A&B", "A&C<D", None).expect("replace");
     assert_eq!(
         read(&edited, "Contents/section0.xml"),
-        section(&body.replace("A&amp;B", "A&amp;C&lt;D"))
+        section(
+            &body
+                .replace("A&amp;B", "A&amp;C&lt;D")
+                .replacen(LINE, "", 1)
+        )
     );
     assert!(texts(&edited).contains(&"A&C<D <C>".to_string()));
 
@@ -372,26 +374,30 @@ fn two_line_paragraph(runs: &str) -> String {
     )
 }
 
+const THREE_LINES: &str = r#"<hp:linesegarray><hp:lineseg textpos="0" vertpos="0" spacing="600"/><hp:lineseg textpos="10" vertpos="1600" spacing="600"/><hp:lineseg textpos="20" vertpos="3200" spacing="600"/></hp:linesegarray>"#;
+
 #[test]
-fn shifts_later_line_starts_when_the_length_changes() {
+fn drops_the_line_layout_of_a_paragraph_whose_length_changes() {
     let runs = r#"<hp:run charPrIDRef="12"><hp:t>가나다라마바사아자차카타파하</hp:t></hp:run>"#;
-    let before = section(&two_line_paragraph(runs));
+    let other = format!(
+        r#"<hp:p paraPrIDRef="0"><hp:run charPrIDRef="12"><hp:t>다음 문단</hp:t></hp:run>{LINE}</hp:p>"#
+    );
+    let before = section(&format!("{}{other}", two_line_paragraph(runs)));
     let bytes = package(&before);
 
-    let edited = replace_text(&bytes, "나다", "나다다다", None).expect("replace");
-    let after = read(&edited, "Contents/section0.xml");
-    assert_eq!(
-        after,
-        before
-            .replace("나다", "나다다다")
-            .replace(r#"textpos="10""#, r#"textpos="12""#)
-            .replace(r#"textpos="20""#, r#"textpos="22""#)
-    );
-
-    let edited = replace_text(&bytes, "나다라", "나", None).expect("replace");
-    let after = read(&edited, "Contents/section0.xml");
-    assert!(after.contains(r#"textpos="8""#) && after.contains(r#"textpos="18""#));
-    assert_eq!(after.matches(r#"textpos="0""#).count(), 1);
+    for (search, replacement) in [("나다", "나다다다"), ("나다라", "나"), ("자차카", "자")]
+    {
+        let edited = replace_text(&bytes, search, replacement, None).expect("replace");
+        assert_eq!(
+            read(&edited, "Contents/section0.xml"),
+            before.replace(search, replacement).replace(THREE_LINES, ""),
+            "{search} -> {replacement}"
+        );
+        let parsed = parse(&edited, &ParseOptions::default()).expect("parse");
+        let paragraphs = &parsed.document.sections[0].paragraphs;
+        assert!(paragraphs[0].line_segs.is_empty());
+        assert_eq!(paragraphs[1].line_segs.len(), 1);
+    }
 }
 
 #[test]
@@ -407,23 +413,14 @@ fn keeps_line_starts_when_the_length_is_the_same() {
 }
 
 #[test]
-fn refuses_a_length_change_that_straddles_a_line_start() {
-    let runs = r#"<hp:run charPrIDRef="12"><hp:t>가나다라마바사아자차카타파하</hp:t></hp:run>"#;
-    let bytes = package(&section(&two_line_paragraph(runs)));
-    assert_eq!(
-        replace_text(&bytes, "자차카", "자", None),
-        Err(EditError::LayoutBound { section: 0 })
-    );
-}
-
-#[test]
-fn refuses_a_length_change_when_earlier_content_hides_the_line_position() {
+fn changes_the_length_even_when_earlier_content_hides_the_line_position() {
     let runs = r#"<hp:run charPrIDRef="12"><hp:ctrl><hp:colPr/></hp:ctrl></hp:run><hp:run charPrIDRef="12"><hp:t>가나다라마바사아자차카타파하</hp:t></hp:run>"#;
     let before = section(&two_line_paragraph(runs));
     let bytes = package(&before);
+    let edited = replace_text(&bytes, "나다", "나다다다", None).expect("replace");
     assert_eq!(
-        replace_text(&bytes, "나다", "나다다다", None),
-        Err(EditError::LayoutBound { section: 0 })
+        read(&edited, "Contents/section0.xml"),
+        before.replace("나다", "나다다다").replace(THREE_LINES, "")
     );
     let edited = replace_text(&bytes, "나다", "다나", None).expect("same length");
     assert_eq!(
@@ -440,9 +437,10 @@ fn edits_text_inside_a_table_cell_without_touching_the_outer_paragraph_lines() {
     let before = section(&body);
     let bytes = package(&before);
     let edited = replace_text(&bytes, "67", "6.7", None).expect("replace");
+    // 칸 안 문단의 줄 배치만 지우고 표를 품은 바깥 문단의 줄 배치는 그대로 둔다.
     assert_eq!(
         read(&edited, "Contents/section0.xml"),
-        before.replace("67", "6.7")
+        before.replace("67", "6.7").replace(LINE, "")
     );
 }
 
@@ -472,7 +470,7 @@ fn splits_text_around_inline_tabs_into_separate_pieces() {
     let edited = replace_text(&bytes, "67", "6.7", None).expect("replace");
     assert_eq!(
         read(&edited, "Contents/section0.xml"),
-        before.replace("67", "6.7")
+        before.replace("67", "6.7").replace(LINE, "")
     );
 }
 
@@ -534,4 +532,151 @@ fn refuses_encrypted_packages() {
         replace_text(&bytes, "김햔지", "김현지", None),
         Err(EditError::Encrypted)
     );
+}
+
+fn items(bytes: &[u8], paragraph: usize) -> Vec<RunItem> {
+    let parsed = parse(bytes, &ParseOptions::default()).expect("parse");
+    parsed.document.sections[0].paragraphs[paragraph]
+        .runs
+        .iter()
+        .flat_map(|run| run.items.clone())
+        .collect()
+}
+
+#[test]
+fn inserts_and_removes_line_breaks_inside_one_text_piece() {
+    let body = format!(
+        r#"<hp:p paraPrIDRef="0"><hp:run charPrIDRef="12"><hp:t>첫 줄<hp:lineBreak/>둘째 줄</hp:t></hp:run>{LINE}</hp:p>"#
+    );
+    let before = section(&body);
+    let bytes = package(&before);
+
+    // 줄 바꿈은 글자 `\n`으로 찾는다. 줄 바꿈을 넘는 글도 한 조각이다.
+    let found = find_text(&bytes, "줄\n둘").expect("find across the break");
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].paragraph, "첫 줄\n둘째 줄");
+
+    // 줄 바꿈을 지운다.
+    let joined = replace_text(&bytes, "줄\n둘", "줄 둘", None).expect("remove break");
+    assert_eq!(
+        read(&joined, "Contents/section0.xml"),
+        before
+            .replace("줄<hp:lineBreak/>둘", "줄 둘")
+            .replace(LINE, "")
+    );
+    assert_eq!(
+        items(&joined, 0),
+        vec![RunItem::Text("첫 줄 둘째 줄".into())]
+    );
+
+    // 줄 바꿈을 넣는다. 같은 앞붙이의 요소가 된다.
+    let split = replace_text(&bytes, "둘째", "둘\n째", None).expect("insert break");
+    let xml = read(&split, "Contents/section0.xml");
+    assert!(xml.contains("둘<hp:lineBreak/>째 줄"), "{xml}");
+    assert!(!xml.contains("linesegarray"));
+    assert_eq!(
+        items(&split, 0),
+        vec![
+            RunItem::Text("첫 줄".into()),
+            RunItem::LineBreak,
+            RunItem::Text("둘".into()),
+            RunItem::LineBreak,
+            RunItem::Text("째 줄".into()),
+        ]
+    );
+    assert_container_is_consistent(&split);
+
+    // 탭은 여전히 넣지 못한다.
+    assert_eq!(
+        replace_text(&bytes, "첫", "첫\t", None),
+        Err(EditError::InvalidReplacement)
+    );
+}
+
+#[test]
+fn fills_an_empty_paragraph_found_by_its_origin() {
+    let body = format!(
+        r#"<hp:p paraPrIDRef="0"><hp:run charPrIDRef="12"><hp:t>위</hp:t></hp:run>{LINE}</hp:p><hp:p paraPrIDRef="0"><hp:run charPrIDRef="13"/>{LINE}</hp:p><hp:p paraPrIDRef="0"><hp:run charPrIDRef="12"><hp:tbl rowCnt="1" colCnt="1"><hp:tr><hp:tc><hp:subList><hp:p paraPrIDRef="5"><hp:run charPrIDRef="12"></hp:run>{LINE}</hp:p></hp:subList></hp:tc></hp:tr></hp:tbl></hp:run>{LINE}</hp:p><hp:p paraPrIDRef="0">{LINE}</hp:p>"#
+    );
+    let bytes = package(&section(&body));
+    let parsed = parse(&bytes, &ParseOptions::default()).expect("parse");
+    let paragraphs = &parsed.document.sections[0].paragraphs;
+    let origins: Vec<Option<ParagraphOrigin>> = paragraphs.iter().map(|p| p.origin).collect();
+    let at = |ordinal| {
+        Some(ParagraphOrigin {
+            section: 0,
+            ordinal,
+        })
+    };
+    // 표 칸 안 문단(차례 3)도 세므로 마지막 문단은 4번째다.
+    assert_eq!(origins, vec![at(0), at(1), at(2), at(4)]);
+    let cell = match &paragraphs[2].runs[0].items[0] {
+        RunItem::Table(table) => table.cells[0].paragraphs[0].origin,
+        other => panic!("table expected, got {other:?}"),
+    };
+    assert_eq!(cell, at(3));
+
+    // 빈 run(`<hp:run …/>`)을 열어 글을 넣고 그 문단의 줄 배치를 지운다.
+    let filled = fill_empty_paragraph(&bytes, 0, 1, "새 글\n둘째 줄").expect("fill");
+    let xml = read(&filled, "Contents/section0.xml");
+    assert!(
+        xml.contains(
+            r#"<hp:run charPrIDRef="13"><hp:t>새 글<hp:lineBreak/>둘째 줄</hp:t></hp:run></hp:p>"#
+        ),
+        "{xml}"
+    );
+    // 여는 태그와 닫는 태그: 다섯 문단 가운데 그 문단만 줄 배치를 잃는다.
+    assert_eq!(
+        xml.matches("linesegarray>").count(),
+        2 * 4,
+        "only that paragraph loses its lines"
+    );
+    assert_container_is_consistent(&filled);
+
+    // 표 칸 안의 빈 문단, run 없는 문단.
+    let cell = fill_empty_paragraph(&bytes, 0, 3, "칸").expect("fill cell");
+    assert!(read(&cell, "Contents/section0.xml")
+        .contains(r#"<hp:run charPrIDRef="12"><hp:t>칸</hp:t></hp:run>"#));
+    let bare = fill_empty_paragraph(&bytes, 0, 4, "끝 & <꺾쇠>").expect("fill bare");
+    assert!(read(&bare, "Contents/section0.xml")
+        .contains(r#"<hp:run charPrIDRef="0"><hp:t>끝 &amp; &lt;꺾쇠&gt;</hp:t></hp:run></hp:p>"#));
+    assert_eq!(texts(&bare).last().map(String::as_str), Some("끝 & <꺾쇠>"));
+
+    // 글이 있는 문단, 없는 문단, 없는 구역은 거절한다.
+    assert_eq!(
+        fill_empty_paragraph(&bytes, 0, 0, "x"),
+        Err(EditError::NotEmpty)
+    );
+    assert_eq!(
+        fill_empty_paragraph(&bytes, 0, 9, "x"),
+        Err(EditError::NotFound)
+    );
+    assert_eq!(
+        fill_empty_paragraph(&bytes, 1, 1, "x"),
+        Err(EditError::NotFound)
+    );
+    assert_eq!(fill_empty_paragraph(&bytes, 0, 1, "").unwrap(), bytes);
+}
+
+#[test]
+fn origins_of_the_fixture_point_at_the_paragraphs_the_editor_sees() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/synthetic.hwpx");
+    let bytes = std::fs::read(path).expect("fixture");
+    let parsed = parse(&bytes, &ParseOptions::default()).expect("parse");
+    for section in &parsed.document.sections {
+        for paragraph in &section.paragraphs {
+            let origin = paragraph.origin.expect("body paragraphs have an origin");
+            let empty = paragraph.runs.iter().all(|run| {
+                run.items
+                    .iter()
+                    .all(|item| !matches!(item, RunItem::Text(_)))
+            });
+            let filled = fill_empty_paragraph(&bytes, origin.section, origin.ordinal, "ㄱ");
+            if empty {
+                assert!(filled.is_ok(), "{origin:?}: {filled:?}");
+            } else {
+                assert_eq!(filled, Err(EditError::NotEmpty), "{origin:?}");
+            }
+        }
+    }
 }

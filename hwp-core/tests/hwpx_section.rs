@@ -162,6 +162,11 @@ fn ctrl_header_footer_colpr_pagenum() {
                         items: vec![RunItem::Text("머리".to_string())],
                         ..Default::default()
                     }],
+                    // 머리말 문단도 구역 XML의 문단 차례를 가진다(바깥 문단이 0).
+                    origin: Some(hwp_core::ParagraphOrigin {
+                        section: 0,
+                        ordinal: 1,
+                    }),
                     ..Default::default()
                 }],
                 applies: "EVEN".to_string(),
@@ -173,6 +178,11 @@ fn ctrl_header_footer_colpr_pagenum() {
                         items: vec![RunItem::Text("둘째".to_string())],
                         ..Default::default()
                     }],
+                    // 머리말 문단도 구역 XML의 문단 차례를 가진다(바깥 문단이 0).
+                    origin: Some(hwp_core::ParagraphOrigin {
+                        section: 0,
+                        ordinal: 2,
+                    }),
                     ..Default::default()
                 }],
                 applies: "ODD".to_string(),

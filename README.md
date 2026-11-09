@@ -2,14 +2,16 @@
 
 HWP/HWPX 문서를 한/글에서 연 것과 같은 모양으로 PDF로 그리는 Rust 엔진입니다.
 문서를 읽는 파서, 쪽에 배치하는 렌더러, 한/글 기준 PDF와 비교하는 채점기로 이루어져 있습니다.
-명령줄 도구와 MCP 서버로 PDF, PNG, 텍스트를 뽑습니다. 편집기는 아닙니다. 다만 HWPX의 짧은 글
-한 군데는 서식을 건드리지 않고 바꿔 새 HWPX로 저장할 수 있습니다.
+명령줄 도구와 MCP 서버로 PDF, PNG, 텍스트를 뽑고, HWPX의 글은 서식을 건드리지 않고 바꿉니다.
+MCP 서버는 [또렷 데스크톱 앱](https://github.com/207studio-oss/ttoryeot-desktop/releases/latest)(무료)과 이어져,
+사람이 앱에서 남긴 주석을 AI 에이전트가 읽고 문서를 고칩니다. 한/글 문서를 다루는 에이전트 스킬도 [skills](skills/)에 있습니다.
 
 **Ttoryeot** is a Rust engine for Korean HWP/HWPX documents. It renders PDF and PNG
 with the same layout as Hancom Office (한/글) and extracts plain text or markdown, through a
-command-line tool (`ttoryeot`) and a stdio MCP server (`ttoryeot-mcp`). It is not an editor.
-The one edit it makes is replacing a short piece of text in an HWPX and saving a new HWPX with
-all formatting untouched. It never modifies the source file.
+command-line tool (`ttoryeot`) and a stdio MCP server (`ttoryeot-mcp`). It replaces text in HWPX
+files with all formatting untouched. The MCP server works with the free Ttoryeot desktop app: an
+agent opens a document there, reads the comments a person leaves, edits the document and marks
+them resolved. Agent skills for Hangul documents are in [skills](skills/).
 
 ## 무엇을 하나요
 
@@ -20,10 +22,11 @@ all formatting untouched. It never modifies the source file.
 - 문서를 PDF, 쪽 PNG, 평문, markdown으로 내보냅니다.
 - AI 도구가 문서를 읽도록 MCP 서버를 함께 제공합니다.
 - 쪽마다 문단·표·칸·개체·머리말 같은 구성 요소의 이름과 자리를 물을 수 있습니다.
-- HWPX의 짧은 글 한 군데를 서식을 그대로 두고 바꿔 새 HWPX로 저장합니다.
+- HWPX의 글을 서식을 그대로 두고 바꿉니다. 줄 바꿈을 넣고 지우며, 빈 문단에 글을 넣습니다.
+- 사람이 또렷 데스크톱 앱에서 남긴 주석을 AI 에이전트가 읽고, 고친 뒤 해결로 표시합니다.
 - 한/글이 내보낸 기준 PDF와 화소·글자·잉크를 자동으로 비교해 수치를 냅니다.
 
-원본 파일은 고치지 않습니다. 글 바꾸기도 늘 새 파일에 씁니다.
+원본 파일은 고치지 않습니다. 글 바꾸기는 새 파일에 쓰고, 사람과 함께 고칠 때만(`in_place`) 고치기 전 사본을 남기고 그 문서를 고칩니다.
 
 ## 받는 법
 
@@ -165,9 +168,13 @@ Claude Desktop, Claude Code 같은 MCP 클라이언트가 문서를 읽을 수 �
 | `read_document_info` | `path` | 형식, 쪽 수, 메타데이터, 사용 글꼴, 암호화 여부 |
 | `extract_text` | `path`, `format`(`plain`, `markdown`), `pages` | 글자 |
 | `render_pdf` | `path`, `output`, `pages` | 새로 만든 PDF의 경로와 크기 |
-| `replace_text` | `path`, `output`, `search`, `replacement`, `occurrence`(선택) | 새로 만든 HWPX의 경로와 바꾼 번째 |
+| `replace_text` | `path`, `output` 또는 `in_place`, `search`, `replacement`, `occurrence`(선택) | 쓴 HWPX의 경로와 바꾼 번째, 바로 고쳤으면 백업 경로 |
 | `render_page_png` | `path`, `page`, `dpi` | PNG 이미지 |
 | `list_fonts` | `document`(선택) | 찾은 글꼴과 문서가 쓰는 글꼴의 상태 |
+| `open_in_viewer` | `path`, `page`(선택) | 또렷 데스크톱에 문서를 띄움(꺼져 있으면 켜고, 켜져 있으면 새 탭). 주석 파일 경로 |
+| `list_annotations` | `path`, `include_resolved`, `images` | 또렷 데스크톱에서 남긴 주석: 번호, 쪽, 고른 자리, 대상 요소의 경로와 글, 댓글, 바꿀 글, 해결 여부, 문서가 바뀌었는지, 고른 부분 PNG |
+| `resolve_annotation` | `path`, `id`, `resolution`, `resolved` | 주석을 해결로 표시(또는 해제)하고 남은 주석 수 |
+| `find_components` | `path`, `page`, `contains`, `x`, `y` | 쪽의 문단·표·칸·그림 등의 종류, 이름, 경로, 글, 자리(pt) |
 
 클라이언트 설정 파일에 다음을 넣습니다. Claude Desktop은 `claude_desktop_config.json`입니다.
 
@@ -191,11 +198,35 @@ claude mcp add ttoryeot -- ttoryeot-mcp --font /path/to/fonts
 
 - `--font`와 `TTORYEOT_PASSWORD`는 선택입니다. 도구 인자로는 암호를 받지 않습니다.
 - `render_pdf`는 확장자가 `.pdf`인 새 파일만 만들고, 있는 파일을 덮어쓰지 않습니다.
-- `replace_text`는 HWPX만 받고 확장자가 `.hwpx`인 새 파일만 만듭니다. 글자 모양, 문단 모양,
-  줄 간격은 그대로 두고 글만 바꿉니다. `search`가 여러 군데에 있으면 전부 바꾸지 않고 번째와
-  앞뒤 글을 알려 주므로, `occurrence`(1부터)를 넣어 다시 부릅니다. 여러 서식에 걸친 글,
-  줄 배치를 정확히 옮길 수 없는 글, 암호·변경 추적 문서는 이유를 적고 거절합니다.
+- `replace_text`는 HWPX만 받습니다. 보통은 `output`에 확장자가 `.hwpx`인 새 파일만 만들고, 있는 파일을
+  덮어쓰지 않습니다. `in_place`를 `true`로 주면 그 문서를 바로 고치고, 고치기 전 사본을 주석 폴더의
+  `backups`에 문서마다 최근 20개까지 남깁니다. 글자 모양, 문단 모양, 줄 간격은 그대로 두고 글만 바꾸며,
+  글자 수가 달라지면 그 문단의 줄은 다시 나눕니다. `search`가 여러 군데에 있으면 전부 바꾸지 않고 번째와
+  앞뒤 글을 알려 주므로, `occurrence`(1부터)를 넣어 다시 부릅니다. 여러 서식에 걸친 글, 암호·변경 추적
+  문서는 이유를 적고 거절합니다.
+- 사람과 함께 고치기: `open_in_viewer`로 문서를 또렷 데스크톱에 띄우면 사람이 요소나 영역에 주석을 남깁니다.
+  에이전트는 `list_annotations`로 읽고 `replace_text`(`in_place`)로 고친 뒤 `resolve_annotation`으로 해결
+  표시합니다. 또렷은 고친 문서와 해결 표시를 바로 보여 줍니다. 앱 위치는 macOS는 번들 ID
+  `dev.207studio.ttoryeot`, Windows는 `%LOCALAPPDATA%\Programs\또렷\또렷.exe`, 그 밖에는 `PATH`의
+  `ttoryeot-viewer`로 찾고, `TTORYEOT_VIEWER`에 실행 파일 경로를 주면 그것을 띄웁니다.
 - 서버는 클라이언트가 건넨 경로의 파일을 서버 권한으로 읽습니다. 믿는 클라이언트에만 연결하세요.
+
+## 에이전트 스킬
+
+[`skills/`](skills/)에 [Agent Skills](https://agentskills.io) 형식의 스킬이 있습니다. Claude Code, Codex 같은 에이전트가
+읽습니다.
+
+| 스킬 | 쓰는 때 |
+|---|---|
+| [`hangul-documents`](skills/hangul-documents/SKILL.md) | 한/글 HWP·HWPX를 읽고, 고치고, 한/글과 같은 모양으로 그릴 때. 파일 구조, 단위, 줄 배치, 한/글 12.30 배치 규칙, 글꼴, 서식을 지키며 고치는 법 |
+| [`hangul-cli`](skills/hangul-cli/SKILL.md) | `ttoryeot` CLI로 문서를 검사하고 PDF·PNG·텍스트를 만들 때 |
+
+```bash
+# Claude Code
+mkdir -p ~/.claude/skills && cp -R skills/hangul-documents skills/hangul-cli ~/.claude/skills/
+# Codex
+mkdir -p ~/.agents/skills && cp -R skills/hangul-documents skills/hangul-cli ~/.agents/skills/
+```
 
 ## 라이브러리로 쓰기
 

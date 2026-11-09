@@ -1,6 +1,27 @@
 # 변경 기록
 
-## 아직 배포하지 않음
+## 0.3.0 (2026-11-09)
+
+### 사람과 함께 고치기
+
+- MCP에 `open_in_viewer`, `list_annotations`, `resolve_annotation`, `find_components`를 더했습니다. 문서를
+  [또렷 데스크톱 앱](https://github.com/207studio-oss/ttoryeot-desktop/releases/latest)에 띄우고, 사람이 앱에서 요소나 영역을
+  골라 남긴 주석(고른 자리, 대상 요소의 경로와 글, 잘라 그린 그림)을 읽고, 처리한 뒤 해결로 표시합니다.
+- MCP `replace_text`에 `in_place`를 더했습니다. 새 파일 대신 그 문서를 바로 고치고, 고치기 전 사본을 주석 폴더의 `backups`에 남깁니다.
+- 엔진에 주석 저장 형식과 앱·에이전트 사이의 문서 열기(`ttoryeot::notes`)를 더했습니다.
+
+### 글 바꾸기
+
+- 글자 수가 달라지면 그 문단의 줄 배치만 지워 다시 나눕니다. 여러 줄 문단에서 글자 수를 바꾸지 못하던 제한(`LayoutBound`)을 없앴고,
+  배치기는 그런 문단 뒤의 문단을 실제 아래에 쌓습니다.
+- 글 안의 줄 바꿈(`hp:lineBreak`)을 글자 `\n`으로 찾고, 넣고, 지웁니다. 빈 문단에 글을 넣는 `fill_empty_paragraph`를 더했고,
+  파서가 HWPX 문단마다 구역 XML의 자리(`Paragraph::origin`)를 적습니다.
+- 문서를 한 번만 읽어 찾고 바꾸는 `edit::Editor`와, 다시 읽어 확인하지 않는 `Check::Skip`(미리 보기용)을 더했습니다.
+- 구성 요소의 문단에 글 전체(`content`), 글자마다의 자리(`chars`), HWPX 자리(`origin`)를 더했습니다.
+
+### 스킬
+
+- 한/글 문서 지식을 정리한 에이전트 스킬 [`hangul-documents`](skills/hangul-documents/SKILL.md)를 더했습니다.
 
 ### 받기 파일
 

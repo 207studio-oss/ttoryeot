@@ -4,6 +4,7 @@ use crate::fonts::FaceId;
 use std::ops::Range;
 use std::sync::Arc;
 
+#[derive(Clone)]
 pub struct Page {
     pub width: f32,
     pub height: f32,
@@ -55,6 +56,7 @@ pub struct Stroke {
 }
 
 /// 같은 얼굴·크기·꾸밈으로 이어 그리는 글자들. x는 줄의 기준점에서 잰 각 글자의 왼쪽(pt, 장평 반영 뒤).
+#[derive(Clone)]
 pub struct GlyphRun {
     pub face: FaceId,
     pub size: f32,
@@ -70,6 +72,7 @@ pub struct GlyphRun {
     pub ranges: Vec<Range<usize>>,
 }
 
+#[derive(Clone)]
 pub enum ImageData {
     Png(Arc<Vec<u8>>),
     Jpeg(Arc<Vec<u8>>),
@@ -78,6 +81,7 @@ pub enum ImageData {
     Bmp(Arc<Vec<u8>>),
 }
 
+#[derive(Clone)]
 pub enum Item {
     Glyphs(GlyphRun),
     Fill {

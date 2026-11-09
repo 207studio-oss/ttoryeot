@@ -95,6 +95,10 @@ pub struct Component {
     pub name: String,
     /// 문단의 첫 글, 수식 식, 병합 칸 표시 같은 덧붙임. 없으면 빈 문자열.
     pub text: String,
+    /// 문단의 글 전체(줄 바꿈은 `\n`, 탭·개체는 빼고). 문단이 아니면 빈 문자열이다. `text`는 앞부분 요약이다.
+    pub content: String,
+    /// HWPX 문단이면 구역 XML에서의 자리. 빈 문단에 글을 넣을 때 쓴다.
+    pub origin: Option<hwp_core::ParagraphOrigin>,
     pub bounds: Rect,
     /// 이 요소 자신이나 그 안의 내용이 눈에 보이는 것을 그렸는가.
     pub ink: bool,
@@ -104,6 +108,17 @@ pub struct Component {
     pub behind: bool,
     /// 감춰졌거나 쪽 밖에 놓여 보이지 않는다.
     pub hidden: bool,
+    /// 문단이면 이 쪽에 놓인 글자마다의 자리(글자 차례). 그 밖에는 비어 있다.
+    pub chars: Vec<CharBox>,
+}
+
+/// 문단 글자 하나가 쪽에 놓인 자리. 화면에서 바로 글을 고칠 때 커서와 선택을 그리는 데 쓴다.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CharBox {
+    /// 문단 글 전체([`Component::content`])에서 몇 번째 글자인가(0부터, 바이트가 아니라 글자 단위).
+    pub index: u32,
+    /// 글자 칸(pt): 왼쪽은 글자 시작, 폭은 글자 폭(자간 포함), 위아래는 그 줄 글자들의 높이.
+    pub rect: Rect,
 }
 
 impl Component {

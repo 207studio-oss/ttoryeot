@@ -455,6 +455,7 @@ fn document() -> Document {
                     color: 0x778899,
                 }],
                 tracks: Vec::new(),
+                origin: None,
                 columns: Some(ColumnDef {
                     count: 2,
                     gap: 500.0,

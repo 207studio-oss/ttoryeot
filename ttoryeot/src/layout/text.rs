@@ -26,6 +26,8 @@ pub(crate) struct Atom<'a> {
     pub track: Option<bool>,
     /// 글자 겹치기: `ch`는 테두리 글자, 안쪽 글자는 그릴 때 얹는다.
     pub compose: Option<&'a Compose>,
+    /// 문단 글(글 조각만 이은 것)에서 이 글자의 차례. 글 조각에서 온 글자만 가진다.
+    pub source: Option<u32>,
 }
 
 impl<'a> Atom<'a> {
@@ -41,6 +43,7 @@ impl<'a> Atom<'a> {
             tab_leader: "NONE",
             track: None,
             compose: None,
+            source: None,
         }
     }
 
@@ -147,6 +150,8 @@ struct Glyph<'a> {
     object: Option<&'a RunItem>,
     track: Option<bool>,
     compose: Option<&'a Compose>,
+    /// 문단 글에서 이 글자의 차례([`Atom::source`]).
+    source: Option<u32>,
 }
 
 pub(crate) struct Placed<'a> {
@@ -312,6 +317,8 @@ impl<'a> Renderer<'a> {
     pub(crate) fn atoms(&mut self, para: &'a Paragraph) -> Vec<Atom<'a>> {
         let wide = self.doc.wchar_positions;
         let mut out: Vec<Atom<'a>> = Vec::new();
+        // 문단 글(글 조각만 이은 것)에서 몇 번째 글자인가. 고치는 쪽이 글자 자리를 찾는 데 쓴다.
+        let mut source = 0u32;
         let pad = |out: &mut Vec<Atom<'a>>, width: usize, start: usize, char_pr: i32| {
             if wide {
                 while out.len() - start < width {
@@ -327,7 +334,11 @@ impl<'a> Renderer<'a> {
                     RunItem::Text(text) => {
                         for ch in text.chars() {
                             let at = out.len();
-                            out.push(Atom::plain(ch, cp));
+                            out.push(Atom {
+                                source: Some(source),
+                                ..Atom::plain(ch, cp)
+                            });
+                            source += 1;
                             pad(&mut out, ch.len_utf16(), at, cp);
                         }
                     }
@@ -361,7 +372,14 @@ impl<'a> Renderer<'a> {
                         });
                         pad(&mut out, 8, start, cp);
                     }
-                    RunItem::LineBreak => out.push(Atom::plain('\n', cp)),
+                    RunItem::LineBreak => {
+                        // 문단 글(`content`)에서 줄 바꿈은 `\n` 한 글자다.
+                        out.push(Atom {
+                            source: Some(source),
+                            ..Atom::plain('\n', cp)
+                        });
+                        source += 1;
+                    }
                     RunItem::Table(_) | RunItem::Picture(_) | RunItem::Shape(_) => {
                         out.push(Atom {
                             object: Some(item),
@@ -587,6 +605,7 @@ impl<'a> Renderer<'a> {
                 object: None,
                 track: atom.track,
                 compose: atom.compose,
+                source: atom.source,
             };
             if control {
                 // 줄 앞 쪽 컨트롤 뒤의 빈칸은 한/글이 줄 안 빈칸으로 친다.
@@ -813,6 +832,32 @@ impl<'a> Renderer<'a> {
         }
         if self.records_text {
             self.record_text(line_text(line));
+        }
+        if self.rec.on
+            && let Some(page) = self.page
+        {
+            let sourced = || line.glyphs.iter().filter(|glyph| glyph.source.is_some());
+            let ascent = sourced()
+                .map(|glyph| glyph.ascent - glyph.dy)
+                .fold(0.0, f32::max);
+            let descent = sourced()
+                .map(|glyph| glyph.descent + glyph.dy)
+                .fold(0.0, f32::max);
+            let boxes: Vec<(u32, scene::Rect)> = sourced()
+                .filter_map(|glyph| {
+                    let index = glyph.source?;
+                    Some((
+                        index,
+                        scene::Rect::new(
+                            x + glyph.x,
+                            baseline - ascent,
+                            glyph.advance.max(0.0),
+                            ascent + descent,
+                        ),
+                    ))
+                })
+                .collect();
+            self.rec.chars(page, &boxes);
         }
         let mut run: Option<GlyphRun> = None;
         for glyph in &line.glyphs {

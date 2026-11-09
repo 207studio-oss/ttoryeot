@@ -1,8 +1,12 @@
 //! HWPX를 HWPX로 둔 채 짧은 글 한 군데를 바꾼다.
 //!
 //! 구역 XML을 다시 쓰지 않고 바꿀 글자의 바이트 범위만 갈아 끼운다. 글자 모양·문단 모양·줄 간격을
-//! 정하는 속성과 나머지 항목은 그대로 남는다. 글자 수가 달라져 줄 시작 위치(`textpos`)가 밀려야 하면
-//! 위치를 정확히 셀 수 있을 때만 옮기고, 셀 수 없으면 서식을 건드리지 않고 오류로 멈춘다.
+//! 정하는 속성과 나머지 항목은 그대로 남는다. 글자 수가 달라지면 그 문단에 저장된 줄 배치(`linesegarray`,
+//! 줄마다 시작 글자 위치와 세로 자리)가 글과 맞지 않으므로 그 문단의 줄 배치만 지운다. 한/글과 또렷은 줄 배치가
+//! 없는 문단을 열 때 글자 폭으로 다시 나눈다.
+//!
+//! 글 안의 줄 바꿈(`hp:lineBreak`)은 글자 `\n`으로 다룬다. 찾을 글과 바꿀 글에 `\n`을 넣어 줄 바꿈을 찾고, 넣고, 지운다.
+//! 글이 없는 빈 문단은 찾을 글이 없으므로 구역과 문단 차례([`fill_empty_paragraph`])로 가리켜 글을 넣는다.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -30,8 +34,10 @@ pub enum EditError {
     /// 변경 추적 표시가 있는 문서는 삭제된 글과 섞일 수 있어 고치지 않는다.
     TrackedChanges,
     EmptySearch,
-    /// 바꿀 글에 제어 문자나 XML에 쓸 수 없는 문자가 있다. 탭과 줄 바꿈은 글자가 아니라 개체라 이 길로 넣지 않는다.
+    /// 바꿀 글에 제어 문자나 XML에 쓸 수 없는 문자가 있다. 줄 바꿈(`\n`)은 넣을 수 있고, 탭은 개체라 이 길로 넣지 않는다.
     InvalidReplacement,
+    /// 글을 넣으려는 문단에 이미 글이 있다. 글이 있는 문단은 [`replace_text`]로 고친다.
+    NotEmpty,
     NotFound,
     /// 찾는 글이 서로 다른 서식 조각이나 탭·줄 바꿈에 걸쳐 있다.
     SpansRuns,
@@ -44,10 +50,6 @@ pub enum EditError {
     OccurrenceOutOfRange {
         occurrence: usize,
         count: usize,
-    },
-    /// 글자 수가 달라지는데 줄 시작 위치를 맞출 수 없다. 같은 길이로 바꾸면 고칠 수 있다.
-    LayoutBound {
-        section: u32,
     },
     /// 새 꾸러미를 만들지 못했거나 만든 꾸러미가 HWPX로 읽히지 않는다.
     Write(String),
@@ -62,8 +64,9 @@ impl fmt::Display for EditError {
                 write!(formatter, "변경 추적 표시가 있는 문서는 글을 바꿀 수 없습니다")
             }
             EditError::EmptySearch => write!(formatter, "찾을 글이 비어 있습니다"),
+            EditError::NotEmpty => write!(formatter, "이 문단에는 이미 글이 있습니다"),
             EditError::InvalidReplacement => {
-                write!(formatter, "바꿀 글에 탭이나 줄 바꿈 같은 제어 문자가 있습니다")
+                write!(formatter, "바꿀 글에 탭 같은 제어 문자가 있습니다")
             }
             EditError::NotFound => write!(formatter, "찾을 글이 문서에 없습니다"),
             EditError::SpansRuns => write!(
@@ -81,10 +84,6 @@ impl fmt::Display for EditError {
             EditError::OccurrenceOutOfRange { occurrence, count } => write!(
                 formatter,
                 "{occurrence}번째 글은 없습니다. 같은 글은 {count}군데입니다"
-            ),
-            EditError::LayoutBound { section } => write!(
-                formatter,
-                "구역 {section}의 이 문단은 줄 나눔 위치가 글자 수에 묶여 있어 글자 수를 바꿀 수 없습니다. 글자 수가 같게 바꿔 주세요"
             ),
             EditError::Write(detail) => write!(formatter, "고친 문서를 만들지 못했습니다: {detail}"),
         }
@@ -117,13 +116,30 @@ struct Unit {
     segments: Vec<Segment>,
     text: String,
     paragraph: usize,
-    prefix: Option<usize>,
+    /// 글(`t`) 요소 이름의 앞붙이(예: `hp:`). 줄 바꿈 요소를 같은 앞붙이로 쓴다.
+    prefix: String,
+}
+
+/// 문단의 마지막 `run`: 빈 문단에 글을 넣을 자리.
+#[derive(Clone, Copy)]
+enum RunSlot {
+    /// `<hp:run …/>`. 태그의 바이트 범위.
+    Empty { start: usize, end: usize },
+    /// `<hp:run …>…</hp:run>`. 닫는 태그가 시작하는 바이트 위치.
+    Open { close: usize },
 }
 
 #[derive(Default)]
 struct Paragraph {
     text: String,
-    linesegs: Vec<(String, (usize, usize))>,
+    /// 이 문단의 `linesegarray` 요소가 차지하는 바이트 범위. 없으면 `None`.
+    layout: Option<(usize, usize)>,
+    /// 이 문단 바로 아래의 마지막 `run`.
+    run: Option<RunSlot>,
+    /// `</hp:p>`가 시작하는 바이트 위치. 빈 요소 `<hp:p/>`면 `None`.
+    close: Option<usize>,
+    /// 문단(`p`) 요소 이름의 앞붙이(예: `hp:`).
+    prefix: String,
 }
 
 struct SectionScan {
@@ -146,13 +162,151 @@ enum Frame {
     Paragraph,
     Run,
     Text,
+    /// 문단의 `linesegarray`. 값은 시작 바이트 위치다.
+    Layout(usize),
     Other,
 }
 
-struct Open {
-    paragraph: usize,
-    pure: bool,
-    position: usize,
+/// 고친 바이트를 다시 읽어 확인할지.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Check {
+    /// 고친 구역 XML과 문서 전체를 다시 읽어 본다. 저장할 바이트는 이렇게 만든다.
+    Full,
+    /// 확인하지 않는다. 바로 다시 읽어 그리는 미리 보기처럼 부르는 쪽이 어차피 읽을 때만 쓴다.
+    /// 구역 XML이 잘못돼도 파서는 그 구역을 건너뛰고 경고만 남기므로, 이렇게 만든 바이트는 저장하지 않는다.
+    Skip,
+}
+
+/// 한 번 읽은 HWPX. 찾기와 바꾸기를 같은 읽기로 해, 큰 구역 XML을 여러 번 훑지 않는다.
+pub struct Editor<'a> {
+    zip: MiniZip<'a>,
+    scans: Vec<SectionScan>,
+}
+
+impl<'a> Editor<'a> {
+    pub fn open(bytes: &'a [u8]) -> Result<Self, EditError> {
+        let (zip, scans) = open(bytes)?;
+        Ok(Self { zip, scans })
+    }
+
+    /// 문서에서 `needle`이 있는 곳을 모두 문서 차례로 돌려준다.
+    pub fn find(&self, needle: &str) -> Result<Vec<TextMatch>, EditError> {
+        if needle.is_empty() {
+            return Err(EditError::EmptySearch);
+        }
+        let hits = collect(&self.scans, needle);
+        if hits.is_empty() {
+            return Err(missing(&self.scans, needle));
+        }
+        Ok(hits
+            .iter()
+            .enumerate()
+            .map(|(index, hit)| describe(&self.scans, hit, needle, index + 1))
+            .collect())
+    }
+
+    /// [`replace_text`]와 같다. `check`로 다시 읽어 확인할지 정한다.
+    pub fn replace(
+        &self,
+        needle: &str,
+        replacement: &str,
+        occurrence: Option<usize>,
+        check: Check,
+    ) -> Result<Vec<u8>, EditError> {
+        if needle.is_empty() {
+            return Err(EditError::EmptySearch);
+        }
+        check_replacement(replacement)?;
+        let scans = &self.scans;
+        if scans.iter().any(|scan| scan.tracked) {
+            return Err(EditError::TrackedChanges);
+        }
+        let hits = collect(scans, needle);
+        let count = hits.len();
+        if count == 0 {
+            return Err(missing(scans, needle));
+        }
+        let chosen = match occurrence {
+            None if count == 1 && spanning_matches(scans, needle) > count => {
+                return Err(EditError::AlsoSpansRuns);
+            }
+            None if count == 1 => 0,
+            None => return Err(EditError::Ambiguous { count }),
+            Some(number) if (1..=count).contains(&number) => number - 1,
+            Some(number) => {
+                return Err(EditError::OccurrenceOutOfRange {
+                    occurrence: number,
+                    count,
+                })
+            }
+        };
+        let hit = &hits[chosen];
+        let scan = &scans[hit.scan];
+        let patched = patch_section(scan, hit, needle, replacement);
+        finish(&self.zip, scan, patched, check)
+    }
+
+    /// [`fill_empty_paragraph`]와 같다. `check`로 다시 읽어 확인할지 정한다.
+    pub fn fill_empty_paragraph(
+        &self,
+        section: u32,
+        ordinal: u32,
+        text: &str,
+        check: Check,
+    ) -> Result<Vec<u8>, EditError> {
+        check_replacement(text)?;
+        let scans = &self.scans;
+        if scans.iter().any(|scan| scan.tracked) {
+            return Err(EditError::TrackedChanges);
+        }
+        let scan = scans
+            .iter()
+            .find(|scan| scan.index == section)
+            .ok_or(EditError::NotFound)?;
+        let index = ordinal as usize;
+        let paragraph = scan.paragraphs.get(index).ok_or(EditError::NotFound)?;
+        if !paragraph.text.is_empty() || scan.units.iter().any(|unit| unit.paragraph == index) {
+            return Err(EditError::NotEmpty);
+        }
+        let p = &paragraph.prefix;
+        let t = format!("<{p}t>{}</{p}t>", escape_text(text, p));
+        let mut patches: Vec<(usize, usize, Vec<u8>)> = Vec::new();
+        match (paragraph.run, paragraph.layout, paragraph.close) {
+            (Some(RunSlot::Open { close }), layout, _) => {
+                patches.push((close, close, t.into_bytes()));
+                patches.extend(layout.map(|(from, to)| (from, to, Vec::new())));
+            }
+            (Some(RunSlot::Empty { start, end }), layout, _) => {
+                let tag =
+                    std::str::from_utf8(&scan.data[start..end]).map_err(|_| EditError::NotHwpx)?;
+                let open = tag
+                    .trim_end()
+                    .strip_suffix("/>")
+                    .ok_or(EditError::NotHwpx)?
+                    .trim_end();
+                patches.push((start, end, format!("{open}>{t}</{p}run>").into_bytes()));
+                patches.extend(layout.map(|(from, to)| (from, to, Vec::new())));
+            }
+            // run이 없으면 줄 배치 자리(없으면 문단 끝)에 기본 글자 모양으로 하나 만든다.
+            (None, Some((from, to)), _) => {
+                patches.push((
+                    from,
+                    to,
+                    format!("<{p}run charPrIDRef=\"0\">{t}</{p}run>").into_bytes(),
+                ));
+            }
+            (None, None, Some(close)) => {
+                patches.push((
+                    close,
+                    close,
+                    format!("<{p}run charPrIDRef=\"0\">{t}</{p}run>").into_bytes(),
+                ));
+            }
+            (None, None, None) => return Err(EditError::NotFound),
+        }
+        let patched = apply_patches(&scan.data, patches);
+        finish(&self.zip, scan, patched, check)
+    }
 }
 
 /// 문서에서 `needle`이 있는 곳을 모두 문서 차례로 돌려준다. 문서는 바꾸지 않는다.
@@ -160,22 +314,13 @@ pub fn find_text(bytes: &[u8], needle: &str) -> Result<Vec<TextMatch>, EditError
     if needle.is_empty() {
         return Err(EditError::EmptySearch);
     }
-    let (_, scans) = open(bytes)?;
-    let hits = collect(&scans, needle);
-    if hits.is_empty() {
-        return Err(missing(&scans, needle));
-    }
-    Ok(hits
-        .iter()
-        .enumerate()
-        .map(|(index, hit)| describe(&scans, hit, needle, index + 1))
-        .collect())
+    Editor::open(bytes)?.find(needle)
 }
 
 /// `needle`이 든 곳 하나를 `replacement`로 바꾼 새 HWPX 바이트를 돌려준다.
 ///
 /// 같은 글이 여러 군데면 `occurrence`(1부터)로 정해야 하고, 정하지 않으면 [`EditError::Ambiguous`]다.
-/// 바꾸는 글자 말고 바뀌는 바이트는 줄 시작 위치 값뿐이며, 그것도 글자 수가 달라질 때만이다.
+/// 바꾸는 글자 말고 바뀌는 바이트는, 글자 수가 달라질 때 그 문단의 줄 배치(`linesegarray`)를 지운 것뿐이다.
 pub fn replace_text(
     bytes: &[u8],
     needle: &str,
@@ -185,39 +330,46 @@ pub fn replace_text(
     if needle.is_empty() {
         return Err(EditError::EmptySearch);
     }
-    if replacement
+    check_replacement(replacement)?;
+    Editor::open(bytes)?.replace(needle, replacement, occurrence, Check::Full)
+}
+
+/// 글이 없는 빈 문단에 글을 넣은 새 HWPX 바이트를 돌려준다. 문단은 구역 번호(`section0.xml`이면 0)와 그 구역 XML에서
+/// 문단(`p`) 요소가 나오는 차례(0부터, 표 칸 안 문단도 센다)로 가리킨다. 파서가 문단마다 적는
+/// [`ParagraphOrigin`](crate::ParagraphOrigin)과 같은 값이다. 글은 문단의 마지막 `run`에 넣고, 그 문단의 줄 배치는
+/// 지워 다시 나누게 한다. `text`의 `\n`은 줄 바꿈이 된다.
+pub fn fill_empty_paragraph(
+    bytes: &[u8],
+    section: u32,
+    ordinal: u32,
+    text: &str,
+) -> Result<Vec<u8>, EditError> {
+    if text.is_empty() {
+        return Ok(bytes.to_vec());
+    }
+    check_replacement(text)?;
+    Editor::open(bytes)?.fill_empty_paragraph(section, ordinal, text, Check::Full)
+}
+
+/// 바꿀 글에 쓸 수 없는 문자가 있는지 본다. 줄 바꿈(`\n`)은 줄 바꿈 요소로 넣는다.
+fn check_replacement(text: &str) -> Result<(), EditError> {
+    if text
         .chars()
-        .any(|ch| ch.is_control() || matches!(ch, '\u{FFFE}' | '\u{FFFF}'))
+        .any(|ch| (ch.is_control() && ch != '\n') || matches!(ch, '\u{FFFE}' | '\u{FFFF}'))
     {
         return Err(EditError::InvalidReplacement);
     }
-    let (zip, scans) = open(bytes)?;
-    if scans.iter().any(|scan| scan.tracked) {
-        return Err(EditError::TrackedChanges);
-    }
-    let hits = collect(&scans, needle);
-    let count = hits.len();
-    if count == 0 {
-        return Err(missing(&scans, needle));
-    }
-    let chosen = match occurrence {
-        None if count == 1 && spanning_matches(&scans, needle) > count => {
-            return Err(EditError::AlsoSpansRuns);
-        }
-        None if count == 1 => 0,
-        None => return Err(EditError::Ambiguous { count }),
-        Some(number) if (1..=count).contains(&number) => number - 1,
-        Some(number) => {
-            return Err(EditError::OccurrenceOutOfRange {
-                occurrence: number,
-                count,
-            })
-        }
-    };
-    let hit = &hits[chosen];
-    let scan = &scans[hit.scan];
-    let patched = patch_section(scan, hit, needle, replacement)?;
-    if dom::parse(&patched).is_none() {
+    Ok(())
+}
+
+/// 고친 구역 XML을 꾸러미에 넣고, XML과 문서로 읽히는지 확인한 새 바이트를 돌려준다.
+fn finish(
+    zip: &MiniZip<'_>,
+    scan: &SectionScan,
+    patched: Vec<u8>,
+    check: Check,
+) -> Result<Vec<u8>, EditError> {
+    if check == Check::Full && dom::parse(&patched).is_none() {
         return Err(EditError::Write(
             "고친 구역이 XML로 읽히지 않습니다".to_string(),
         ));
@@ -227,10 +379,22 @@ pub fn replace_text(
     let output = zip
         .rewrite(&replaced)
         .map_err(|error| EditError::Write(format!("{error:?}")))?;
-    super::parse(&output, &ParseOptions::default()).map_err(|error| {
-        EditError::Write(format!("고친 문서를 다시 읽지 못했습니다: {error:?}"))
-    })?;
+    if check == Check::Full {
+        super::parse(&output, &ParseOptions::default()).map_err(|error| {
+            EditError::Write(format!("고친 문서를 다시 읽지 못했습니다: {error:?}"))
+        })?;
+    }
     Ok(output)
+}
+
+/// 바이트 범위를 뒤에서부터 갈아 끼운다. 범위는 겹치지 않아야 한다.
+fn apply_patches(data: &[u8], mut patches: Vec<(usize, usize, Vec<u8>)>) -> Vec<u8> {
+    patches.sort_by_key(|patch| std::cmp::Reverse(patch.0));
+    let mut output = data.to_vec();
+    for (from, to, content) in patches {
+        output.splice(from..to, content);
+    }
+    output
 }
 
 fn open(bytes: &[u8]) -> Result<(MiniZip<'_>, Vec<SectionScan>), EditError> {
@@ -312,12 +476,7 @@ fn describe(scans: &[SectionScan], hit: &Hit, needle: &str, occurrence: usize) -
     }
 }
 
-fn patch_section(
-    scan: &SectionScan,
-    hit: &Hit,
-    needle: &str,
-    replacement: &str,
-) -> Result<Vec<u8>, EditError> {
+fn patch_section(scan: &SectionScan, hit: &Hit, needle: &str, replacement: &str) -> Vec<u8> {
     let unit = &scan.units[hit.unit];
     let mut patches: Vec<(usize, usize, Vec<u8>)> = Vec::new();
     patches.push(text_patch(
@@ -327,35 +486,16 @@ fn patch_section(
         needle.len(),
         replacement,
     ));
-
-    let delta = utf16_len(replacement) as i64 - utf16_len(needle) as i64;
-    let paragraph = &scan.paragraphs[unit.paragraph];
-    if delta != 0 && paragraph.linesegs.len() > 1 {
-        let bound = EditError::LayoutBound {
-            section: scan.index,
-        };
-        let start = unit.prefix.ok_or_else(|| bound.clone())? + utf16_len(&unit.text[..hit.offset]);
-        let end = start + utf16_len(needle);
-        for (value, (from, to)) in &paragraph.linesegs {
-            let position: usize = value.parse().map_err(|_| bound.clone())?;
-            if position <= start {
-                continue;
-            }
-            if position < end {
-                return Err(bound);
-            }
-            let shifted = i64::try_from(position).map_err(|_| bound.clone())? + delta;
-            let shifted = u32::try_from(shifted).map_err(|_| bound.clone())?;
-            patches.push((*from, *to, shifted.to_string().into_bytes()));
+    // 글자 수가 바뀌면 저장된 줄 나눔은 옛 글의 것이다. 시작 위치만 옮기면 한 줄에 글이 넘치거나 모자란다.
+    // 그 문단의 줄 배치를 지워, 여는 쪽이 글자 폭으로 다시 나누게 한다. 다른 문단의 줄 배치는 그대로 둔다.
+    // 줄 바꿈을 넣거나 지워도 줄이 달라진다.
+    let breaks = needle.contains('\n') || replacement.contains('\n');
+    if breaks || utf16_len(replacement) != utf16_len(needle) {
+        if let Some((from, to)) = scan.paragraphs[unit.paragraph].layout {
+            patches.push((from, to, Vec::new()));
         }
     }
-
-    patches.sort_by_key(|patch| std::cmp::Reverse(patch.0));
-    let mut output = scan.data.clone();
-    for (from, to, content) in patches {
-        output.splice(from..to, content);
-    }
-    Ok(output)
+    apply_patches(&scan.data, patches)
 }
 
 fn text_patch(
@@ -392,7 +532,7 @@ fn text_patch(
     } else {
         content.extend_from_slice(&scan.data[head.start..head.start + prefix.len()]);
     }
-    content.extend_from_slice(escape(replacement).as_bytes());
+    content.extend_from_slice(escape_text(replacement, &unit.prefix).as_bytes());
     let suffix = &tail.text[end - last_cursor..];
     if tail.cdata {
         content.extend_from_slice(escape(suffix).as_bytes());
@@ -415,6 +555,11 @@ fn escape(text: &str) -> String {
     escaped
 }
 
+/// 넣을 글을 XML로 쓴다. `\n`은 같은 앞붙이의 줄 바꿈 요소가 된다.
+fn escape_text(text: &str, prefix: &str) -> String {
+    escape(text).replace('\n', &format!("<{prefix}lineBreak/>"))
+}
+
 fn utf16_len(text: &str) -> usize {
     text.encode_utf16().count()
 }
@@ -425,11 +570,14 @@ fn scan_section(index: u32, name: String, data: Vec<u8>) -> Result<SectionScan, 
     reader.config_mut().trim_text(false);
     let mut buffer = Vec::new();
     let mut frames: Vec<Frame> = Vec::new();
-    let mut open_paragraphs: Vec<Open> = Vec::new();
+    // 열려 있는 문단의 번호. 표 칸 안의 문단은 바깥 문단 위에 쌓인다.
+    let mut open_paragraphs: Vec<usize> = Vec::new();
     let mut units: Vec<Unit> = Vec::new();
     let mut paragraphs: Vec<Paragraph> = Vec::new();
     let mut segments: Vec<Segment> = Vec::new();
     let mut tracked = false;
+    // 지금 글(`t`) 요소 이름의 앞붙이.
+    let mut text_prefix = String::new();
 
     loop {
         let before = usize::try_from(reader.buffer_position()).map_err(|_| malformed())?;
@@ -440,40 +588,51 @@ fn scan_section(index: u32, name: String, data: Vec<u8>) -> Result<SectionScan, 
         match &event {
             Event::Start(element) | Event::Empty(element) => {
                 let local = local_name(element.name().local_name().into_inner().as_bytes())?;
+                let qualified = element.name().as_ref().to_string();
+                let prefix = qualified[..qualified.len() - local.len()].to_string();
                 let starts = matches!(event, Event::Start(_));
                 if matches!(local.as_str(), "deleteBegin" | "insertBegin") {
                     tracked = true;
+                }
+                // 글 안의 줄 바꿈은 글자 `\n` 하나로 이어 둔다. 바꿀 글이 줄 바꿈을 넘어도 한 조각이다.
+                if !starts && local == "lineBreak" && frames.last() == Some(&Frame::Text) {
+                    segments.push(Segment {
+                        start: before,
+                        end: after,
+                        text: "\n".to_string(),
+                        cdata: false,
+                    });
+                    buffer.clear();
+                    continue;
                 }
                 if frames.last() == Some(&Frame::Text) {
                     finish_unit(
                         &mut segments,
                         &mut units,
                         &mut paragraphs,
-                        &mut open_paragraphs,
+                        &open_paragraphs,
+                        &text_prefix,
                     );
-                    if let Some(open) = open_paragraphs.last_mut() {
-                        open.pure = false;
-                    }
-                } else if frames.len() >= 2
-                    && frames[frames.len() - 1] == Frame::Run
-                    && frames[frames.len() - 2] == Frame::Paragraph
-                    && local != "t"
-                {
-                    if let Some(open) = open_paragraphs.last_mut() {
-                        open.pure = false;
+                }
+                if !starts && local == "p" {
+                    // 빈 요소 문단도 파서처럼 센다.
+                    paragraphs.push(Paragraph {
+                        prefix: prefix.clone(),
+                        ..Paragraph::default()
+                    });
+                }
+                if !starts && local == "run" && frames.last() == Some(&Frame::Paragraph) {
+                    if let Some(&paragraph) = open_paragraphs.last() {
+                        paragraphs[paragraph].run = Some(RunSlot::Empty {
+                            start: before,
+                            end: after,
+                        });
                     }
                 }
-                if local == "lineseg" {
-                    if let Some(open) = open_paragraphs.last() {
-                        if let Some(range) = attribute_range(&data[before..after], "textpos") {
-                            let value =
-                                std::str::from_utf8(&data[before + range.0..before + range.1])
-                                    .unwrap_or("")
-                                    .to_string();
-                            paragraphs[open.paragraph]
-                                .linesegs
-                                .push((value, (before + range.0, before + range.1)));
-                        }
+                let layout = local == "linesegarray" && frames.last() == Some(&Frame::Paragraph);
+                if layout && !starts {
+                    if let Some(&paragraph) = open_paragraphs.last() {
+                        paragraphs[paragraph].layout = Some((before, after));
                     }
                 }
                 if starts {
@@ -483,16 +642,19 @@ fn scan_section(index: u32, name: String, data: Vec<u8>) -> Result<SectionScan, 
                     let in_paragraph = !open_paragraphs.is_empty();
                     let frame = match local.as_str() {
                         "p" => {
-                            paragraphs.push(Paragraph::default());
-                            open_paragraphs.push(Open {
-                                paragraph: paragraphs.len() - 1,
-                                pure: true,
-                                position: 0,
+                            paragraphs.push(Paragraph {
+                                prefix: prefix.clone(),
+                                ..Paragraph::default()
                             });
+                            open_paragraphs.push(paragraphs.len() - 1);
                             Frame::Paragraph
                         }
                         "run" => Frame::Run,
-                        "t" if in_paragraph && frames.last() == Some(&Frame::Run) => Frame::Text,
+                        "t" if in_paragraph && frames.last() == Some(&Frame::Run) => {
+                            text_prefix = prefix.clone();
+                            Frame::Text
+                        }
+                        _ if layout => Frame::Layout(before),
                         _ => Frame::Other,
                     };
                     frames.push(frame);
@@ -503,10 +665,23 @@ fn scan_section(index: u32, name: String, data: Vec<u8>) -> Result<SectionScan, 
                     &mut segments,
                     &mut units,
                     &mut paragraphs,
-                    &mut open_paragraphs,
+                    &open_paragraphs,
+                    &text_prefix,
                 ),
                 Frame::Paragraph => {
-                    open_paragraphs.pop();
+                    if let Some(paragraph) = open_paragraphs.pop() {
+                        paragraphs[paragraph].close = Some(before);
+                    }
+                }
+                Frame::Run if frames.last() == Some(&Frame::Paragraph) => {
+                    if let Some(&paragraph) = open_paragraphs.last() {
+                        paragraphs[paragraph].run = Some(RunSlot::Open { close: before });
+                    }
+                }
+                Frame::Layout(start) => {
+                    if let Some(&paragraph) = open_paragraphs.last() {
+                        paragraphs[paragraph].layout = Some((start, after));
+                    }
                 }
                 _ => {}
             },
@@ -560,12 +735,13 @@ fn finish_unit(
     segments: &mut Vec<Segment>,
     units: &mut Vec<Unit>,
     paragraphs: &mut [Paragraph],
-    open_paragraphs: &mut [Open],
+    open_paragraphs: &[usize],
+    prefix: &str,
 ) {
     if segments.is_empty() {
         return;
     }
-    let Some(open) = open_paragraphs.last_mut() else {
+    let Some(&paragraph) = open_paragraphs.last() else {
         segments.clear();
         return;
     };
@@ -574,14 +750,12 @@ fn finish_unit(
         .iter()
         .map(|segment| segment.text.as_str())
         .collect();
-    let prefix = open.pure.then_some(open.position);
-    open.position += utf16_len(&text);
-    paragraphs[open.paragraph].text.push_str(&text);
+    paragraphs[paragraph].text.push_str(&text);
     units.push(Unit {
         segments,
         text,
-        paragraph: open.paragraph,
-        prefix,
+        paragraph,
+        prefix: prefix.to_string(),
     });
 }
 
@@ -589,38 +763,4 @@ fn local_name(raw: &[u8]) -> Result<String, EditError> {
     std::str::from_utf8(raw)
         .map(str::to_string)
         .map_err(|_| EditError::NotHwpx)
-}
-
-fn attribute_range(tag: &[u8], name: &str) -> Option<(usize, usize)> {
-    let key = name.as_bytes();
-    let mut from = 0;
-    while from + key.len() <= tag.len() {
-        let found = tag[from..]
-            .windows(key.len())
-            .position(|window| window == key)?;
-        let at = from + found;
-        from = at + key.len();
-        if at == 0 || !tag[at - 1].is_ascii_whitespace() {
-            continue;
-        }
-        let mut cursor = from;
-        while tag.get(cursor).is_some_and(u8::is_ascii_whitespace) {
-            cursor += 1;
-        }
-        if tag.get(cursor) != Some(&b'=') {
-            continue;
-        }
-        cursor += 1;
-        while tag.get(cursor).is_some_and(u8::is_ascii_whitespace) {
-            cursor += 1;
-        }
-        let quote = *tag.get(cursor)?;
-        if quote != b'"' && quote != b'\'' {
-            continue;
-        }
-        let start = cursor + 1;
-        let length = tag[start..].iter().position(|byte| *byte == quote)?;
-        return Some((start, start + length));
-    }
-    None
 }

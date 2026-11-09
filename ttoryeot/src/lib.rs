@@ -23,6 +23,7 @@ mod hft;
 pub use layout::text::lang_of;
 mod layout;
 mod markdown;
+pub mod notes;
 pub mod pdf;
 pub mod scene;
 pub mod subst;

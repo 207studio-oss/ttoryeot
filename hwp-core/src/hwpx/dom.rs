@@ -12,6 +12,9 @@ pub struct Node {
     pub children: Vec<Node>,
     pub text: String,
     pub(crate) depth_limited: bool,
+    /// 문단(`p`) 요소면 이 XML에서 문단 요소가 나오는 차례(0부터, 중첩된 문단도 센다). 깊이 제한으로 건너뛴 곳
+    /// 뒤에서는 셀 수 없어 `None`이다. 글 고치기([`super::edit`])가 같은 차례로 문단을 찾는다.
+    pub(crate) ordinal: Option<u32>,
 }
 
 impl Node {
@@ -22,6 +25,7 @@ impl Node {
             children: Vec::new(),
             text: String::new(),
             depth_limited: false,
+            ordinal: None,
         }
     }
 
@@ -123,6 +127,14 @@ fn read(data: &[u8], mut on_child: Option<&mut dyn FnMut(&Node)>) -> Option<Node
     let mut buffer = Vec::new();
     let mut skipped = Vec::new();
     let mut depth_limited = false;
+    // 문단 요소의 차례. 깊이 제한으로 건너뛰면 그 안의 문단을 셀 수 없어 그 뒤로는 적지 않는다.
+    let mut paragraphs: u32 = 0;
+    let mut number = |node: &mut Node, depth_limited: bool| {
+        if node.name == "p" {
+            node.ordinal = (!depth_limited).then_some(paragraphs);
+            paragraphs = paragraphs.saturating_add(1);
+        }
+    };
 
     loop {
         match reader.read_event_into(&mut buffer) {
@@ -131,14 +143,17 @@ fn read(data: &[u8], mut on_child: Option<&mut dyn FnMut(&Node)>) -> Option<Node
                     reader.read_to_end_into(element.name(), &mut skipped).ok()?;
                     depth_limited = true;
                 } else {
-                    stack.push(element_node(&element)?);
+                    let mut node = element_node(&element)?;
+                    number(&mut node, depth_limited);
+                    stack.push(node);
                 }
             }
             Ok(Event::Empty(element)) => {
                 if stack.len() >= MAX_XML_DEPTH {
                     depth_limited = true;
                 } else {
-                    let node = element_node(&element)?;
+                    let mut node = element_node(&element)?;
+                    number(&mut node, depth_limited);
                     attach(node, &mut stack, &mut root, &mut on_child)?;
                 }
             }

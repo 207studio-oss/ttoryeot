@@ -519,6 +519,19 @@ pub struct Paragraph {
     pub markpens: Vec<Markpen>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tracks: Vec<TrackMark>,
+    /// HWPX 구역 XML에서 이 문단의 자리. HWP 5와 바탕쪽 문단은 `None`이다.
+    #[serde(skip)]
+    pub origin: Option<ParagraphOrigin>,
+}
+
+/// HWPX 문단이 구역 XML 어디에 있는가. 글 고치기가 찾을 글 없이 문단을 가리킬 때 쓴다
+/// (`hwpx::edit::fill_empty_paragraph`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ParagraphOrigin {
+    /// 구역 파일 번호(`Contents/section0.xml`이면 0).
+    pub section: u32,
+    /// 그 구역 XML에서 문단(`p`) 요소가 나오는 차례(0부터, 표 칸 안 문단도 센다).
+    pub ordinal: u32,
 }
 
 impl Paragraph {
