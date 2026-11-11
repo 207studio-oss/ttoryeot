@@ -156,3 +156,55 @@ fn empty_script_draws_nothing() {
     let items = first_page(equation(""));
     assert!(items.is_empty());
 }
+
+/// 작은 스택에서 첫 쪽을 그린다. 스택이 넘치면 프로세스가 죽는다.
+/// 1MB는 최적화하지 않은 시험 빌드가 상한까지 겹친 수식을 그리는 데 넉넉한 크기다. 릴리스 빌드는
+/// 같은 수식을 256KB 안에서 그리므로 iOS·macOS 보조 스레드(512KB)에서도 넘치지 않는다.
+fn first_page_on_small_stack(script: String) -> Vec<Item> {
+    let stack = 1 << 20;
+    std::thread::Builder::new()
+        .stack_size(stack)
+        .spawn(move || first_page(equation(&script)))
+        .unwrap()
+        .join()
+        .unwrap()
+}
+
+#[test]
+fn deeply_nested_scripts_draw_nothing_instead_of_overflowing_the_stack() {
+    let x = "x".to_string();
+    let scripts = [
+        "{".repeat(20_000) + &x,
+        "sqrt ".repeat(20_000) + &x,
+        "left ( ".repeat(20_000) + &x,
+        "bar ".repeat(20_000) + &x,
+        "x sup {".repeat(20_000) + &x,
+        x.clone() + &" over x".repeat(20_000),
+        x.clone() + &" atop {x over x}".repeat(20_000),
+    ];
+    for script in scripts {
+        let head: String = script.chars().take(12).collect();
+        let items = first_page_on_small_stack(script);
+        assert_eq!(drawn_text(&items), "", "{head}…");
+    }
+}
+
+#[test]
+fn nesting_up_to_the_limit_still_draws_on_a_small_stack() {
+    // 겹침마다 나무 깊이 상한(64) 바로 아래까지 쌓는다.
+    let x = "x".to_string();
+    for script in [
+        "{".repeat(63) + &x,
+        "sqrt ".repeat(63) + &x,
+        "left ( ".repeat(31) + &x,
+        "bar ".repeat(63) + &x,
+        "x sup {".repeat(31) + &x,
+        "pmatrix {".repeat(31) + &x,
+        "sum from {".repeat(31) + &x,
+        x.clone() + &" over y".repeat(62),
+    ] {
+        let head: String = script.chars().take(12).collect();
+        let items = first_page_on_small_stack(script);
+        assert!(drawn_text(&items).contains('x'), "{head}…");
+    }
+}

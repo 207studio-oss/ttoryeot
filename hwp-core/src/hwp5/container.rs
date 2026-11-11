@@ -36,6 +36,8 @@ pub fn open(bytes: &[u8]) -> Result<Container<'_>, Fatal> {
 struct Raw<'a> {
     bytes: &'a [u8],
     sector_len: usize,
+    /// 머리 뒤에 든 온전한 섹터 수. 섹터 하나는 한 사슬에 한 번만 나오므로 사슬도 이보다 길 수 없다.
+    sectors: usize,
     fat: Vec<u32>,
 }
 
@@ -47,19 +49,21 @@ impl Raw<'_> {
 
     fn chain(&self, start: u32) -> Option<Vec<u8>> {
         let mut data = Vec::new();
-        for id in chain(start, &self.fat)? {
+        for id in chain(start, &self.fat, self.sectors)? {
             data.extend_from_slice(self.sector(id)?);
         }
         Some(data)
     }
 }
 
-/// FAT(또는 mini FAT)을 따라간 섹터 번호. 고리나 범위 밖 번호면 None.
-fn chain(start: u32, table: &[u32]) -> Option<Vec<u32>> {
+/// FAT(또는 mini FAT)을 따라간 섹터 번호. 고리이거나, 그 영역의 섹터 수(`sectors`)보다 길거나,
+/// 범위 밖 번호면 None. 길이 상한 덕에 사슬로 모으는 자료는 파일 크기를 넘지 않는다.
+fn chain(start: u32, table: &[u32], sectors: usize) -> Option<Vec<u32>> {
+    let limit = table.len().min(sectors);
     let mut ids = Vec::new();
     let mut id = start;
     while id != END_OF_CHAIN {
-        if ids.len() >= table.len() {
+        if ids.len() >= limit {
             return None;
         }
         ids.push(id);
@@ -100,6 +104,7 @@ fn read_streams(bytes: &[u8]) -> Option<Vec<(String, Vec<u8>)>> {
     let mut raw = Raw {
         bytes,
         sector_len,
+        sectors: (bytes.len() / sector_len).saturating_sub(1),
         fat: Vec::new(),
     };
 
@@ -112,12 +117,18 @@ fn read_streams(bytes: &[u8]) -> Option<Vec<(String, Vec<u8>)>> {
         fat_sectors.extend(words(entries));
         difat = words(next).next()?;
     }
-    let fat_count = u32_at(44) as usize;
+    // 올바른 CFB는 FAT 섹터를 한 번씩만 적는다. 같은 섹터를 되풀이해 적으면 작은 파일로 아주 큰
+    // FAT을 만들 수 있으므로 거절한다. 그러면 FAT은 파일보다 커지지 않는다.
+    let fat_count = (u32_at(44) as usize).min(raw.sectors);
+    let mut listed = vec![false; raw.sectors];
     for id in fat_sectors
         .into_iter()
         .filter(|id| *id != FREE)
         .take(fat_count)
     {
+        if std::mem::replace(listed.get_mut(id as usize)?, true) {
+            return None;
+        }
         let fat: Vec<u32> = words(raw.sector(id)?).collect();
         raw.fat.extend(fat);
     }
@@ -165,7 +176,7 @@ fn read_streams(bytes: &[u8]) -> Option<Vec<(String, Vec<u8>)>> {
             STREAM => {
                 let mut data = if size < cutoff {
                     let mut data = Vec::new();
-                    for id in chain(start, &mini_fat)? {
+                    for id in chain(start, &mini_fat, mini_stream.len() / mini_len)? {
                         let offset = (id as usize).checked_mul(mini_len)?;
                         data.extend_from_slice(mini_stream.get(offset..offset + mini_len)?);
                     }
@@ -226,4 +237,62 @@ fn write_standard(streams: &[(String, Vec<u8>)]) -> Option<Vec<u8>> {
     }
     file.flush().ok()?;
     Some(file.into_inner().into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chain_is_no_longer_than_the_sectors_it_can_visit() {
+        // 0 → 1 → 2 → 끝.
+        let table = [1, 2, END_OF_CHAIN, FREE];
+        assert_eq!(chain(0, &table, 4), Some(vec![0, 1, 2]));
+        assert_eq!(chain(0, &table, 2), None);
+        // 고리 1 → 2 → 1은 표 길이가 아니라 섹터 수만큼 가서 멈춘다.
+        let cyclic = [1, 2, 1, FREE];
+        assert_eq!(chain(0, &cyclic, 4), None);
+        assert_eq!(chain(9, &table, 4), None);
+    }
+
+    /// 머리 DIFAT이 FAT 섹터 0을 `repeat`번 적고, 섹터 1은 디렉터리인 v3 CFB.
+    fn repeated_fat_sector(repeat: u32) -> Vec<u8> {
+        let mut file = vec![0u8; HEADER_LEN * 3];
+        file[..8].copy_from_slice(&MAGIC);
+        file[26..28].copy_from_slice(&3u16.to_le_bytes());
+        file[30..32].copy_from_slice(&9u16.to_le_bytes());
+        file[32..34].copy_from_slice(&6u16.to_le_bytes());
+        file[44..48].copy_from_slice(&repeat.to_le_bytes());
+        file[48..52].copy_from_slice(&1u32.to_le_bytes());
+        file[60..64].copy_from_slice(&END_OF_CHAIN.to_le_bytes());
+        file[68..72].copy_from_slice(&END_OF_CHAIN.to_le_bytes());
+        for slot in 0..DIFAT_IN_HEADER {
+            let id = if (slot as u32) < repeat { 0 } else { FREE };
+            file[76 + slot * 4..80 + slot * 4].copy_from_slice(&id.to_le_bytes());
+        }
+        // FAT: 0 = FAT 섹터, 1 = 디렉터리(한 섹터), 나머지는 비었다.
+        let fat = HEADER_LEN;
+        file[fat..fat + HEADER_LEN].fill(0xFF);
+        file[fat..fat + 4].copy_from_slice(&0xFFFF_FFFDu32.to_le_bytes());
+        file[fat + 4..fat + 8].copy_from_slice(&END_OF_CHAIN.to_le_bytes());
+        // 디렉터리: 이름만 있는 빈 뿌리.
+        let root = HEADER_LEN * 2;
+        for (index, unit) in "Root Entry".encode_utf16().chain([0]).enumerate() {
+            file[root + index * 2..root + index * 2 + 2].copy_from_slice(&unit.to_le_bytes());
+        }
+        file[root + 64..root + 66].copy_from_slice(&22u16.to_le_bytes());
+        file[root + 66] = 5;
+        for offset in [68, 72, 76] {
+            file[root + offset..root + offset + 4].copy_from_slice(&FREE.to_le_bytes());
+        }
+        file[root + 116..root + 120].copy_from_slice(&END_OF_CHAIN.to_le_bytes());
+        file
+    }
+
+    #[test]
+    fn a_fat_sector_listed_twice_is_rejected() {
+        assert_eq!(read_streams(&repeated_fat_sector(1)), Some(Vec::new()));
+        assert_eq!(read_streams(&repeated_fat_sector(2)), None);
+        assert_eq!(read_streams(&repeated_fat_sector(109)), None);
+    }
 }

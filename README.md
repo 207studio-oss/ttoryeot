@@ -60,7 +60,7 @@ SmartScreen이 "Windows의 PC 보호" 창을 띄울 수 있습니다. 받은 파
 **추가 정보**를 누른 뒤 **실행**을 누릅니다. PowerShell에서는 다음과 같이 해시를 봅니다.
 
 ```powershell
-Get-FileHash .\ttoryeot-v0.3.0-windows-x64-setup.exe -Algorithm SHA256
+Get-FileHash .\ttoryeot-v0.3.1-windows-x64-setup.exe -Algorithm SHA256
 ```
 
 ### macOS
@@ -72,8 +72,8 @@ Mac의 칩에 맞는 파일을 받습니다. Apple 메뉴 › **이 Mac에 관�
 macOS 실행 파일은 Developer ID로 서명하고 Apple 공증을 받았습니다. 풀어서 `PATH`에 있는 폴더로 옮깁니다.
 
 ```bash
-tar -xzf ttoryeot-v0.3.0-macos-apple-silicon.tar.gz
-sudo install -m 755 ttoryeot-v0.3.0-macos-apple-silicon/ttoryeot* /usr/local/bin/
+tar -xzf ttoryeot-v0.3.1-macos-apple-silicon.tar.gz
+sudo install -m 755 ttoryeot-v0.3.1-macos-apple-silicon/ttoryeot* /usr/local/bin/
 ttoryeot --help
 ```
 
@@ -83,8 +83,8 @@ x86_64용 하나이고 glibc 2.17 이상(대부분의 배포판)에서 돕니다
 아래처럼 소스에서 설치하세요.
 
 ```bash
-tar -xzf ttoryeot-v0.3.0-linux-x64.tar.gz
-sudo install -m 755 ttoryeot-v0.3.0-linux-x64/ttoryeot* /usr/local/bin/
+tar -xzf ttoryeot-v0.3.1-linux-x64.tar.gz
+sudo install -m 755 ttoryeot-v0.3.1-linux-x64/ttoryeot* /usr/local/bin/
 ```
 
 ### 소스에서 설치
@@ -92,8 +92,8 @@ sudo install -m 755 ttoryeot-v0.3.0-linux-x64/ttoryeot* /usr/local/bin/
 `ttoryeot`(명령줄)와 `ttoryeot-mcp`(MCP 서버)는 별개 실행 파일입니다. 필요한 것만 설치하세요.
 
 ```bash
-cargo install ttoryeot-cli --locked
-cargo install ttoryeot-mcp --locked
+cargo install --git https://github.com/207studio-oss/ttoryeot --tag v0.3.1 --locked ttoryeot-cli
+cargo install --git https://github.com/207studio-oss/ttoryeot --tag v0.3.1 --locked ttoryeot-mcp
 ```
 
 Rust 1.99 이상이 필요합니다. 저장소에서 직접 빌드하려면 다음과 같이 합니다.

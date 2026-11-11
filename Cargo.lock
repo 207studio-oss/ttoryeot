@@ -1630,7 +1630,7 @@ dependencies = [
 
 [[package]]
 name = "ttoryeot"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "flate2",
  "image",
@@ -1645,14 +1645,14 @@ dependencies = [
 
 [[package]]
 name = "ttoryeot-alloc"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "libc",
 ]
 
 [[package]]
 name = "ttoryeot-cli"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "clap",
  "hayro",
@@ -1666,7 +1666,7 @@ dependencies = [
 
 [[package]]
 name = "ttoryeot-ffi"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "libc",
  "serde_json",
@@ -1677,7 +1677,7 @@ dependencies = [
 
 [[package]]
 name = "ttoryeot-hwp-core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "aes",
  "cfb",
@@ -1722,7 +1722,7 @@ dependencies = [
 
 [[package]]
 name = "ttoryeot-mcp"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "base64 0.22.1",
  "clap",
@@ -1740,7 +1740,7 @@ dependencies = [
 
 [[package]]
 name = "ttoryeot-score"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "hayro",
  "libc",

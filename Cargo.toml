@@ -4,16 +4,16 @@ members = ["hwp-core", "ttoryeot*"]
 exclude = ["vendor/krilla"]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.3.1"
 rust-version = "1.99"
 license = "AGPL-3.0-only"
 repository = "https://github.com/207studio-oss/ttoryeot"
 homepage = "https://github.com/207studio-oss/ttoryeot"
 
 [workspace.dependencies]
-hwp-core = { package = "ttoryeot-hwp-core", path = "hwp-core", version = "0.3.0" }
-ttoryeot = { path = "ttoryeot", version = "0.3.0" }
-ttoryeot-alloc = { path = "ttoryeot-alloc", version = "0.3.0" }
+hwp-core = { package = "ttoryeot-hwp-core", path = "hwp-core", version = "0.3.1" }
+ttoryeot = { path = "ttoryeot", version = "0.3.1" }
+ttoryeot-alloc = { path = "ttoryeot-alloc", version = "0.3.1" }
 
 [profile.release]
 panic = "unwind"

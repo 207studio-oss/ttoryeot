@@ -702,11 +702,52 @@ impl Style {
     }
 }
 
+/// 구문 나무가 이보다 깊으면 수식을 그리지 않는다.
+///
+/// 파싱·배치·버리기가 모두 나무를 따라 재귀하고, 배치는 호출한 스레드의 스택을 쓴다
+/// (iOS·macOS 보조 스레드는 512KB). 한/글 문서의 수식은 이 깊이에 한참 못 미친다.
+pub(super) const MAX_DEPTH: usize = 64;
+
+/// 구문 나무의 깊이. 스택을 쓰지 않고 센다.
+pub(super) fn depth(nodes: &[Node]) -> usize {
+    let mut deepest = 0;
+    let mut pending: Vec<(&Node, usize)> = nodes.iter().map(|node| (node, 1)).collect();
+    while let Some((node, level)) = pending.pop() {
+        deepest = deepest.max(level);
+        let next = level + 1;
+        match node {
+            Node::Atom(..) | Node::Space(_) | Node::Amp | Node::RowSep => {}
+            Node::Group(list) => pending.extend(list.iter().map(|child| (child, next))),
+            Node::Script(base, sub, sup) => {
+                pending.push((base, next));
+                pending.extend(sub.iter().chain(sup).map(|child| (&**child, next)));
+            }
+            Node::BigOp(_, sub, sup) => {
+                pending.extend(sub.iter().chain(sup).map(|child| (&**child, next)));
+            }
+            Node::Frac(numerator, denominator, _) => {
+                pending.push((numerator, next));
+                pending.push((denominator, next));
+            }
+            Node::Root(content, index) => {
+                pending.push((content, next));
+                pending.extend(index.iter().map(|child| (&**child, next)));
+            }
+            Node::Fence(_, inner, _) | Node::Accent(_, inner) => pending.push((inner, next)),
+            Node::Grid(_, rows) => pending.extend(rows.iter().flatten().map(|cell| (cell, next))),
+        }
+    }
+    deepest
+}
+
 /// 낱말 → 구문 나무. 글자 모양은 묶음 안에서 뒤로 이어지고 묶음을 벗어나면 되돌아간다.
 pub(super) struct Parser {
     tokens: Vec<Token>,
     at: usize,
     glyphs: Glyphs,
+    /// 지금 들어와 있는 `primary` 수.
+    nesting: usize,
+    too_deep: bool,
 }
 
 impl Parser {
@@ -715,6 +756,8 @@ impl Parser {
             tokens,
             at: 0,
             glyphs,
+            nesting: 0,
+            too_deep: false,
         }
     }
 
@@ -722,8 +765,15 @@ impl Parser {
         self.tokens.get(self.at).cloned()
     }
 
+    /// 너무 깊다. 남은 낱말을 모두 건너뛰어 모든 반복을 끝낸다.
+    fn give_up(&mut self) {
+        self.too_deep = true;
+        self.at = self.tokens.len();
+    }
+
     /// 스크립트 전체. 짝 없는 `}`와 `right`는 건너뛴다.
-    pub(super) fn parse_all(&mut self) -> Vec<Node> {
+    /// 나무가 [`MAX_DEPTH`]보다 깊어지면 `None`이다.
+    pub(super) fn parse_all(&mut self) -> Option<Vec<Node>> {
         let mut out = Vec::new();
         let style = Style::default();
         while self.at < self.tokens.len() {
@@ -734,7 +784,7 @@ impl Parser {
             self.at += 1;
             _ = self.delimiter();
         }
-        out
+        (!self.too_deep && depth(&out) <= MAX_DEPTH).then_some(out)
     }
 
     /// 닫는 `}`나 right 앞까지. 칸·행 표지는 목록에 남긴다.
@@ -759,6 +809,11 @@ impl Parser {
                     Some(Key::Structural(name)) if name == "over" || name == "atop" => {
                         self.at += 1;
                         let numerator = out.pop().unwrap_or(Node::Group(Vec::new()));
+                        // `a over b over c …`는 재귀 없이 분수가 겹쳐 쌓인다.
+                        if depth(std::slice::from_ref(&numerator)) >= MAX_DEPTH {
+                            self.give_up();
+                            return out;
+                        }
                         let denominator =
                             self.item(&mut current).unwrap_or(Node::Group(Vec::new()));
                         out.push(Node::Frac(
@@ -848,7 +903,19 @@ impl Parser {
             .unwrap_or(Node::Group(Vec::new()))
     }
 
+    /// 항목 하나(첨자 없이). 묶음·명령 인자를 따라 재귀하므로 여기서 깊이를 센다.
     fn primary(&mut self, style: &mut Style) -> Option<Node> {
+        if self.nesting >= MAX_DEPTH {
+            self.give_up();
+            return None;
+        }
+        self.nesting += 1;
+        let node = self.primary_here(style);
+        self.nesting -= 1;
+        node
+    }
+
+    fn primary_here(&mut self, style: &mut Style) -> Option<Node> {
         let token = self.peek()?;
         self.at += 1;
         match token {
@@ -1083,6 +1150,22 @@ mod tests {
         assert!(matches!(tokens[0], Token::Word(ref w) if w == "a"));
         assert!(matches!(tokens[1], Token::Sup));
         assert!(matches!(tokens[2], Token::Number(ref n) if n == "2"));
+    }
+
+    fn parse(script: &str) -> Option<Vec<Node>> {
+        Parser::new(tokenize(script), Glyphs::new(false)).parse_all()
+    }
+
+    #[test]
+    fn nesting_stops_at_the_depth_limit() {
+        // 묶음 63겹 + 글자 = 깊이 64.
+        let inside = "{".repeat(MAX_DEPTH - 1) + "x";
+        assert_eq!(depth(&parse(&inside).unwrap()), MAX_DEPTH);
+        assert!(parse(&("{".repeat(MAX_DEPTH) + "x")).is_none());
+        // 분수 사슬은 재귀 없이 쌓이지만 같은 상한을 받는다.
+        assert!(parse(&("x".to_string() + &" over y".repeat(MAX_DEPTH - 1))).is_some());
+        assert!(parse(&("x".to_string() + &" over y".repeat(MAX_DEPTH))).is_none());
+        assert!(parse(&"sqrt ".repeat(100_000)).is_none());
     }
 
     #[test]
