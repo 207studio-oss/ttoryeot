@@ -1,7 +1,7 @@
 #[path = "support/mod.rs"]
 mod support;
 
-use hwp_core::hwpx::edit::{fill_empty_paragraph, find_text, replace_text, EditError};
+use hwp_core::hwpx::edit::{fill_empty_paragraph, find_text, replace_text, EditError, Editor};
 use hwp_core::hwpx::zip::MiniZip;
 use hwp_core::model::RunItem;
 use hwp_core::{parse, ParagraphOrigin, ParseOptions};
@@ -450,6 +450,11 @@ fn refuses_documents_with_tracked_changes() {
         r#"<hp:p paraPrIDRef="0"><hp:run charPrIDRef="12"><hp:t>본문 <hp:deleteBegin id="1"/>지운 글<hp:deleteEnd id="1"/></hp:t></hp:run>{LINE}</hp:p>"#
     );
     let bytes = package(&section(&body));
+    assert!(Editor::open(&bytes).unwrap().has_tracked_changes());
+    let plain = package(&section(
+        r#"<hp:p><hp:run><hp:t>본문</hp:t></hp:run></hp:p>"#,
+    ));
+    assert!(!Editor::open(&plain).unwrap().has_tracked_changes());
     assert_eq!(
         replace_text(&bytes, "본문", "본", None),
         Err(EditError::TrackedChanges)

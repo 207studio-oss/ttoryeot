@@ -534,24 +534,26 @@ impl<'a> Renderer<'a> {
         style
     }
 
+    /// 대체 얼굴 목록(규칙의 이름 순, 그다음 넣을 수 있는 모든 얼굴). 처음 한 번 만들고, 꺼내 쓴 뒤
+    /// `self.glyph_fallbacks`에 돌려놓는다.
     fn glyph_fallbacks(&mut self) -> Vec<FaceId> {
-        if self.glyph_fallbacks.is_none() {
-            let rules = self.rules;
-            let mut faces: Vec<_> = rules
-                .fallback_glyph
-                .iter()
-                .chain(&rules.fallback_gothic)
-                .chain(&rules.fallback_serif)
-                .filter_map(|name| self.fonts.find(name, false).map(|(id, _)| id))
-                .collect();
-            for id in self.fonts.embeddable_faces() {
-                if !faces.contains(&id) {
-                    faces.push(id);
-                }
-            }
-            self.glyph_fallbacks = Some(faces);
+        if let Some(faces) = self.glyph_fallbacks.take() {
+            return faces;
         }
-        self.glyph_fallbacks.clone().unwrap_or_default()
+        let rules = self.rules;
+        let mut faces: Vec<_> = rules
+            .fallback_glyph
+            .iter()
+            .chain(&rules.fallback_gothic)
+            .chain(&rules.fallback_serif)
+            .filter_map(|name| self.fonts.find(name, false).map(|(id, _)| id))
+            .collect();
+        for id in self.fonts.embeddable_faces() {
+            if !faces.contains(&id) {
+                faces.push(id);
+            }
+        }
+        faces
     }
 
     /// 글자를 그릴 얼굴과 글리프: 고른 얼굴에 없으면 대체 얼굴에서 찾는다.
@@ -561,12 +563,19 @@ impl<'a> Renderer<'a> {
         {
             return Some((face, info));
         }
-        self.glyph_fallbacks().into_iter().find_map(|fallback| {
+        // 대체 얼굴 목록은 빌려 쓰고 돌려놓는다. 글자가 없는 얼굴은 메모리에 올리지 않는다.
+        let fallbacks = self.glyph_fallbacks();
+        let found = fallbacks.iter().find_map(|&fallback| {
+            if !self.fonts.covers(fallback, ch) {
+                return None;
+            }
             self.fonts
                 .glyph(fallback, ch)
                 .filter(|info| info.glyph != 0)
                 .map(|info| (fallback, info))
-        })
+        });
+        self.glyph_fallbacks = Some(fallbacks);
+        found
     }
 
     /// 줄 하나의 글자 자리. 탭은 탭 설정의 멈춤 자리(없으면 기본 간격의 배수)로 간다.

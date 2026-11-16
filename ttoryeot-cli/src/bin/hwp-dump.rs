@@ -29,13 +29,6 @@ struct TextSuccess {
 }
 
 #[derive(Serialize)]
-struct TextFailure<'a> {
-    file: String,
-    ok: bool,
-    fatal: &'a Fatal,
-}
-
-#[derive(Serialize)]
 struct LineSuccess<'a> {
     file: &'a str,
     ok: bool,
@@ -164,11 +157,7 @@ fn response(bytes: &[u8], format: OutputFormat, hint: FormatHint, file: &str) ->
             Ok(heads) => {
                 json_response(serde_json::json!({"file": file, "ok": true, "heads": heads}))
             }
-            Err(fatal) => json_response(LineFailure {
-                file,
-                ok: false,
-                fatal: &fatal,
-            }),
+            Err(fatal) => failure(format, &fatal, file),
         };
     }
     let options = ParseOptions {
@@ -235,29 +224,26 @@ fn response(bytes: &[u8], format: OutputFormat, hint: FormatHint, file: &str) ->
                 warnings: &parsed.warnings,
             })
         }
-        Err(fatal) => {
-            if format == OutputFormat::Frame {
-                Response::Frame(hwp_core::frame::failure_frame(&fatal))
-            } else if format == OutputFormat::Text {
-                json_response(TextFailure {
-                    file: file.to_string(),
-                    ok: false,
-                    fatal: &fatal,
-                })
-            } else if format == OutputFormat::Lines {
-                json_response(LineFailure {
-                    file,
-                    ok: false,
-                    fatal: &fatal,
-                })
-            } else {
-                json_response(Failure {
-                    schema: SCHEMA_VERSION,
-                    ok: false,
-                    fatal: &fatal,
-                })
-            }
-        }
+        Err(fatal) => failure(format, &fatal, file),
+    }
+}
+
+fn failure(format: OutputFormat, fatal: &Fatal, file: &str) -> Response {
+    match format {
+        OutputFormat::Frame => Response::Frame(hwp_core::frame::failure_frame(fatal)),
+        OutputFormat::Model => json_response(Failure {
+            schema: SCHEMA_VERSION,
+            ok: false,
+            fatal,
+        }),
+        OutputFormat::Text
+        | OutputFormat::Lines
+        | OutputFormat::NumberingRaw
+        | OutputFormat::ShapeFills => json_response(LineFailure {
+            file,
+            ok: false,
+            fatal,
+        }),
     }
 }
 
@@ -294,29 +280,7 @@ fn main() {
         let name = input_name(path);
         let response = match read_input(path) {
             Ok(bytes) => response(&bytes, args.format, args.hint, &name),
-            Err(fatal) => {
-                if args.format == OutputFormat::Frame {
-                    Response::Frame(hwp_core::frame::failure_frame(&fatal))
-                } else if args.format == OutputFormat::Text {
-                    json_response(TextFailure {
-                        file: name,
-                        ok: false,
-                        fatal: &fatal,
-                    })
-                } else if args.format == OutputFormat::Lines {
-                    json_response(LineFailure {
-                        file: &name,
-                        ok: false,
-                        fatal: &fatal,
-                    })
-                } else {
-                    json_response(Failure {
-                        schema: SCHEMA_VERSION,
-                        ok: false,
-                        fatal: &fatal,
-                    })
-                }
-            }
+            Err(fatal) => failure(args.format, &fatal, &name),
         };
         let written = match response {
             Response::Json(line) if line.is_empty() => true,

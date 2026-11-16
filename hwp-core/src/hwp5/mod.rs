@@ -14,6 +14,7 @@ mod summary;
 pub mod table;
 pub mod tags;
 
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::sync::Arc;
@@ -37,6 +38,7 @@ const VIEW_TEXT_PREFIX: &str = "ViewText/Section";
 struct StreamSet {
     lengths: BTreeMap<String, u64>,
     cipher: Option<password::PasswordCipher>,
+    inflate_budget: InflateBudget,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -245,15 +247,14 @@ pub fn parse(bytes: &[u8], options: &ParseOptions) -> Result<Parsed, Fatal> {
             }
         }
         if compressed {
-            match inflate_raw(&raw) {
+            match streams.inflate_budget.inflate(&raw) {
                 Some(inflated) => {
                     if inflated.truncated {
                         warnings.push(Warning::new(
                             WarningKind::StreamSizeMismatch,
                             section,
                             format!(
-                                "{name} deflate output exceeds {} MiB; truncated",
-                                MAX_INFLATE / (1024 * 1024)
+                                "{name} deflate output exceeds the per-stream or document limit; truncated"
                             ),
                         ));
                     }
@@ -363,6 +364,7 @@ fn collect_streams<R>(file: &CompoundFile<R>) -> StreamSet {
     StreamSet {
         lengths,
         cipher: None,
+        inflate_budget: InflateBudget::new(MAX_TOTAL_INFLATE),
     }
 }
 
@@ -432,16 +434,13 @@ fn read_doc_info<R: Read + std::io::Seek>(
     }
     let raw = stream.data;
     let mut data = if compressed {
-        match inflate_raw(&raw) {
+        match streams.inflate_budget.inflate(&raw) {
             Some(inflated) => {
                 if inflated.truncated {
                     warnings.push(Warning::new(
                         WarningKind::StreamSizeMismatch,
                         None,
-                        format!(
-                            "DocInfo deflate output exceeds {} MiB; truncated",
-                            MAX_INFLATE / (1024 * 1024)
-                        ),
+                        "DocInfo deflate output exceeds the per-stream or document limit; truncated",
                     ));
                 }
                 if streams
@@ -570,19 +569,20 @@ fn load_bin_data<R: Read + std::io::Seek>(
         let mode = bin_data.compression.get(index).copied().unwrap_or(0);
         let compressed_stream = mode == 1 || (mode == 0 && compressed);
         let data = if compressed_stream {
-            match inflate_raw(&raw) {
+            match streams.inflate_budget.inflate(&raw) {
                 Some(inflated) => {
                     if inflated.truncated {
                         warnings.push(Warning::new(
                             WarningKind::StreamSizeMismatch,
                             None,
                             format!(
-                                "{path} deflate output exceeds {} MiB; truncated",
-                                MAX_INFLATE / (1024 * 1024)
+                                "{path} deflate output exceeds the per-stream or document limit; truncated"
                             ),
                         ));
                     }
-                    if inflated.data.is_empty() {
+                    if inflated.truncated && inflated.data.is_empty() {
+                        continue;
+                    } else if inflated.data.is_empty() {
                         raw
                     } else {
                         inflated.data
@@ -611,6 +611,7 @@ fn load_bin_data<R: Read + std::io::Seek>(
 }
 
 const MAX_INFLATE: u64 = 512 * 1024 * 1024;
+const MAX_TOTAL_INFLATE: u64 = 1024 * 1024 * 1024;
 
 struct Inflated {
     data: Vec<u8>,
@@ -618,8 +619,27 @@ struct Inflated {
     truncated: bool,
 }
 
-fn inflate_raw(raw: &[u8]) -> Option<Inflated> {
-    inflate_raw_limit(raw, MAX_INFLATE)
+struct InflateBudget {
+    remaining: Cell<u64>,
+}
+
+impl InflateBudget {
+    fn new(limit: u64) -> Self {
+        Self {
+            remaining: Cell::new(limit),
+        }
+    }
+
+    fn inflate(&self, raw: &[u8]) -> Option<Inflated> {
+        let limit = self.remaining.get().min(MAX_INFLATE);
+        let inflated = inflate_raw_limit(raw, limit)?;
+        self.remaining.set(
+            self.remaining
+                .get()
+                .saturating_sub(inflated.data.len() as u64),
+        );
+        Some(inflated)
+    }
 }
 
 fn inflate_raw_limit(raw: &[u8], limit: u64) -> Option<Inflated> {
@@ -649,7 +669,25 @@ fn inflate_raw_limit(raw: &[u8], limit: u64) -> Option<Inflated> {
 mod tests {
     use std::io::Write;
 
-    use super::inflate_raw_limit;
+    use super::{inflate_raw_limit, InflateBudget};
+
+    #[test]
+    fn inflate_budget_is_shared_by_streams() {
+        let mut encoder =
+            flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(&[7u8; 64]).unwrap();
+        let compressed = encoder.finish().unwrap();
+        let budget = InflateBudget::new(100);
+        let first = budget.inflate(&compressed).unwrap();
+        assert!(!first.truncated);
+        assert_eq!(first.data.len(), 64);
+        let second = budget.inflate(&compressed).unwrap();
+        assert!(second.truncated);
+        assert_eq!(second.data.len(), 36);
+        let third = budget.inflate(&compressed).unwrap();
+        assert!(third.truncated);
+        assert!(third.data.is_empty());
+    }
 
     #[test]
     fn inflate_limit_keeps_prefix() {

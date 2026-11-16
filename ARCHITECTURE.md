@@ -130,7 +130,7 @@ ttoryeot-cli, ttoryeot-mcp, ttoryeot-ffi ──▶ ttoryeot-alloc
 
 ## 렌더러
 
-1. **글꼴** — `FontBook`이 글꼴 파일의 이름표만 먼저 읽고, 실제로 쓰는 얼굴만 메모리에 올립니다.
+1. **글꼴** — `FontBook`이 색인할 때 글꼴 파일을 읽어 이름표를 남기고, 실제로 쓰는 얼굴만 보관합니다.
    문서에 내장된 HWP5 `BinData`·HWPX `isEmbedded` 글꼴은 문서별 메모리 색인으로 붙이며
    디스크에 쓰지 않습니다. 문서가 적은 글꼴 이름은 후보 전체에서 내장 얼굴 → 설치된 얼굴
    차례로 찾고, 후보에서 모두 실패할 때만 `data/font-subst.tsv`의 대체 규칙을 같은 차례로

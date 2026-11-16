@@ -4,6 +4,23 @@
 입력 파일을 임시 디렉터리에 쓰지 않습니다. 앱 UI와 문서 가져오기 경로는 이 저장소에
 들어 있지 않습니다.
 
+## 미리 빌드한 XCFramework 받기
+
+0.3.2부터 [Releases](https://github.com/207studio-oss/ttoryeot/releases)에 `ttoryeot-<버전>-ios-xcframework.zip`이
+있습니다. 아래 스크립트로 만든 `Ttoryeot.xcframework` 그대로이고, 라이선스·고지 파일은 그 안의 `LICENSES/`에
+있습니다. 풀어서 Xcode 프로젝트에 넣거나 SwiftPM `binaryTarget`으로 받습니다. checksum은 릴리스의
+`SHA256SUMS`에 적힌 이 zip의 값입니다.
+
+```swift
+.binaryTarget(
+    name: "Ttoryeot",
+    url: "https://github.com/207studio-oss/ttoryeot/releases/download/v0.3.2/ttoryeot-v0.3.2-ios-xcframework.zip",
+    checksum: "<SHA256SUMS의 값>"
+)
+```
+
+Swift 다리(`ttoryeot-ffi/swift/Ttoryeot.swift`)는 zip에 없으므로 같은 태그의 저장소에서 가져와 앱 타깃에 넣습니다.
+
 ## XCFramework 만들기
 
 Rust 1.99 이상, Xcode와 다음 Rust 타깃이 필요합니다.
@@ -22,8 +39,9 @@ LLVM 비트코드에 진단을 낼 수 있습니다. 앱 링크와 시뮬레이�
 Xcode 프로젝트에 XCFramework를 연결하고 `ttoryeot-ffi/swift/Ttoryeot.swift`를 앱 타깃에
 추가합니다. 렌더러 C 모듈 이름은 `CTtoryeot`입니다. 같은 라이브러리에 파서 ABI와
 `CHWPCore` 모듈도 들어 있으므로 기존 `libhwp_core.a`와 중복 `CHWPCore` modulemap은 앱 타깃에서
-제외하고 이 산출물 하나로 두 ABI를 부를 수 있습니다. 이 저장소와 산출물은 207studio의 독점
-라이선스를 따릅니다. 앱에 넣는 글꼴은 별도로 사용·배포 허가를 확인해야 합니다.
+제외하고 이 산출물 하나로 두 ABI를 부를 수 있습니다. 엔진과 이 산출물은 AGPL-3.0-only 또는
+또렷 상용 라이선스 가운데 하나를 골라 쓸 수 있습니다([LICENSING.md](../../LICENSING.md)).
+앱에 넣는 글꼴은 별도로 사용·배포 허가를 확인해야 합니다.
 검증 예제는 `Security`와 `CoreFoundation`을 링크하며 PDF를 확인하는 데 `PDFKit`을 씁니다.
 
 ## Swift 호출
@@ -79,9 +97,9 @@ PDFKit에서 확인할 수 있습니다. 켜진 arm64 iPad 시뮬레이터가 �
 ./ttoryeot-ffi/ios/verify-ios.sh dist/Ttoryeot.xcframework <시뮬레이터-ID>
 ```
 
-선택적으로 세 번째·네 번째 인자에 [공개 표본](accuracy.md#내려받기와-재현)의 `plain.hwp`와
+선택적으로 세 번째·네 번째 인자에 [공개 표본](../../docs/accuracy.md#내려받기와-재현)의 `plain.hwp`와
 한글 글꼴 파일을 주면 한국어 `안내문` 텍스트와 24쪽도 확인합니다.
 
 이 자료는 한/글 기준 PDF가 아니므로 시각적 일치 시험은
 아닙니다. HWP 3.0, HWPML, HWP5 EncryptVersion 1~3은 지원하지 않습니다. 표·쪽 나눔과
-글꼴 대체의 정확도 한계는 [정확도 문서](accuracy.md)를 참고하세요.
+글꼴 대체의 정확도 한계는 [정확도 문서](../../docs/accuracy.md)를 참고하세요.

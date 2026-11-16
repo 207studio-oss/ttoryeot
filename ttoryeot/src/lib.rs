@@ -20,6 +20,7 @@ pub mod components;
 mod equation;
 pub mod fonts;
 mod hft;
+pub mod inline_edit;
 pub use layout::text::lang_of;
 mod layout;
 mod markdown;

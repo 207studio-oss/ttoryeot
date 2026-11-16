@@ -1,6 +1,6 @@
 //! 암호 HWPX: `META-INF/manifest.xml`의 ODF `encryption-data`(PBKDF2-HMAC-SHA1 → AES-256-CBC → raw deflate)를 푼다.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
 
 use aes::cipher::{BlockCipherDecrypt, KeyInit};
@@ -22,7 +22,10 @@ const SHA256_1K: &str = "#sha256-1k";
 const SHA1_1K: &str = "#sha1-1k";
 const CHECKSUM_SPAN: usize = 1024;
 const MAX_PLAIN_SIZE: u64 = 512 * 1024 * 1024;
+const MAX_TOTAL_PLAIN_SIZE: u64 = 1024 * 1024 * 1024;
 const MAX_ITERATIONS: u32 = 10_000_000;
+// Limit the whole package, not only each entry. Most entries reuse the same key.
+const MAX_TOTAL_KDF_ITERATIONS: u64 = 10_000_000;
 
 #[derive(Debug, Default, Clone)]
 struct Sealed {
@@ -58,23 +61,21 @@ pub(super) fn unlock(
     let Some(password) = password else {
         return Err(Fatal::PasswordProtected);
     };
+    if !within_kdf_budget(&manifest.entries) {
+        return Err(Fatal::UnsupportedEncryptionDetail(
+            "HWPX manifest exceeds the key-derivation work limit".to_string(),
+        ));
+    }
     let start_key = Sha256::digest(password.as_bytes());
-    let mut keys: Vec<(&[u8], u32, [u8; 32])> = Vec::new();
+    let mut keys: BTreeMap<(&[u8], u32), [u8; 32]> = BTreeMap::new();
     let mut opened = BTreeMap::new();
     let mut failures = Vec::new();
     let mut verified = false;
+    let mut remaining_plain = MAX_TOTAL_PLAIN_SIZE;
     for (name, entry) in &manifest.entries {
-        let key = match keys
-            .iter()
-            .find(|(salt, iterations, _)| *salt == entry.salt && *iterations == entry.iterations)
-        {
-            Some((_, _, key)) => *key,
-            None => {
-                let key = pbkdf2_sha1(&start_key, &entry.salt, entry.iterations);
-                keys.push((&entry.salt, entry.iterations, key));
-                key
-            }
-        };
+        let key = *keys
+            .entry((entry.salt.as_slice(), entry.iterations))
+            .or_insert_with(|| pbkdf2_sha1(&start_key, &entry.salt, entry.iterations));
         let result = match zip.read(name) {
             None => Err("is unreadable"),
             Some(data) => match aes256_cbc_decrypt(&key, &entry.iv, &data) {
@@ -84,7 +85,17 @@ pub(super) fn unlock(
                     if compressed.is_some() {
                         verified = true;
                     }
-                    match inflate(compressed.unwrap_or(&decrypted), entry.size) {
+                    let plain = inflate(
+                        compressed.unwrap_or(&decrypted),
+                        entry.size,
+                        &mut remaining_plain,
+                    )
+                    .map_err(|()| {
+                        Fatal::CorruptDocument(
+                            "encrypted HWPX exceeds the total decompression limit".to_string(),
+                        )
+                    })?;
+                    match plain {
                         Some(plain)
                             if compressed.is_some()
                                 || checksum(entry, &plain) == entry.checksum =>
@@ -110,6 +121,20 @@ pub(super) fn unlock(
         warnings.push(Warning::new(WarningKind::SectionUnreadable, None, detail));
     }
     Ok(opened)
+}
+
+fn within_kdf_budget(entries: &BTreeMap<String, Sealed>) -> bool {
+    let mut seen = BTreeSet::new();
+    let mut total = 0u64;
+    for entry in entries.values() {
+        if seen.insert((entry.salt.as_slice(), entry.iterations)) {
+            total += u64::from(entry.iterations);
+            if total > MAX_TOTAL_KDF_ITERATIONS {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 fn supported(entry: &Sealed) -> bool {
@@ -285,17 +310,25 @@ fn aes256_cbc_decrypt(key: &[u8; 32], iv: &[u8], data: &[u8]) -> Option<Vec<u8>>
     Some(plain)
 }
 
-fn inflate(data: &[u8], declared: Option<u64>) -> Option<Vec<u8>> {
-    let limit = declared.unwrap_or(MAX_PLAIN_SIZE).min(MAX_PLAIN_SIZE);
+fn inflate(data: &[u8], declared: Option<u64>, remaining: &mut u64) -> Result<Option<Vec<u8>>, ()> {
+    let entry_limit = declared.unwrap_or(MAX_PLAIN_SIZE).min(MAX_PLAIN_SIZE);
+    let limit = entry_limit.min(*remaining);
     let mut out = Vec::new();
-    flate2::read::DeflateDecoder::new(data)
+    let read = flate2::read::DeflateDecoder::new(data)
         .take(limit + 1)
-        .read_to_end(&mut out)
-        .ok()?;
-    if out.len() as u64 > limit {
-        return None;
+        .read_to_end(&mut out);
+    let total_exceeded = out.len() as u64 > *remaining;
+    *remaining = remaining.saturating_sub(out.len() as u64);
+    if total_exceeded {
+        return Err(());
     }
-    Some(out)
+    if read.is_err() {
+        return Ok(None);
+    }
+    if out.len() as u64 > limit {
+        return Ok(None);
+    }
+    Ok(Some(out))
 }
 
 fn base64(text: &str) -> Option<Vec<u8>> {
@@ -326,6 +359,42 @@ fn base64(text: &str) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn encrypted_plaintext_budget_is_shared_by_all_entries() {
+        use std::io::Write;
+        let mut encoder =
+            flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(&[7; 64]).unwrap();
+        let compressed = encoder.finish().unwrap();
+        let mut remaining = 100;
+        assert_eq!(
+            inflate(&compressed, None, &mut remaining)
+                .unwrap()
+                .unwrap()
+                .len(),
+            64
+        );
+        assert_eq!(remaining, 36);
+        assert_eq!(inflate(&compressed, None, &mut remaining), Err(()));
+        assert_eq!(remaining, 0);
+    }
+
+    #[test]
+    fn kdf_budget_counts_distinct_salt_and_iteration_pairs() {
+        let entry = |salt: u8, iterations| Sealed {
+            salt: vec![salt],
+            iterations,
+            ..Sealed::default()
+        };
+        let mut entries = BTreeMap::new();
+        entries.insert("a".into(), entry(1, 5_000_000));
+        entries.insert("b".into(), entry(1, 5_000_000));
+        entries.insert("c".into(), entry(2, 5_000_000));
+        assert!(within_kdf_budget(&entries));
+        entries.insert("d".into(), entry(1, 1));
+        assert!(!within_kdf_budget(&entries));
+    }
 
     #[test]
     fn decrypts_an_unpadded_aes_block_without_discarding_its_last_byte() {

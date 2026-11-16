@@ -72,6 +72,12 @@ pub fn parse(bytes: &[u8], opts: &ParseOptions) -> Result<Parsed, Fatal> {
     on_parser_stack(|| parse_document(bytes, opts))?
 }
 
+/// 현재 스레드에서 문서를 읽는다. `parse`와 결과는 같지만 별도 스레드를 만들거나 패닉을 잡지 않는다.
+/// 호출자는 파서에 충분한 스택(권장 16 MiB)을 제공해야 한다. 스레드가 없는 환경에서 쓴다.
+pub fn parse_on_current_thread(bytes: &[u8], opts: &ParseOptions) -> Result<Parsed, Fatal> {
+    parse_document(bytes, opts)
+}
+
 pub(crate) fn on_parser_stack<T: Send>(operation: impl FnOnce() -> T + Send) -> Result<T, Fatal> {
     std::thread::scope(|scope| {
         std::thread::Builder::new()

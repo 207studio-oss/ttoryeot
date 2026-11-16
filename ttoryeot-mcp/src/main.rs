@@ -7,10 +7,11 @@ mod raster;
 use std::collections::BTreeMap;
 use std::fs::OpenOptions;
 use std::io::Write;
+use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
 use clap::Parser;
@@ -59,6 +60,8 @@ const VIEWER_BUNDLE: &str = "dev.207studio.ttoryeot";
 const LAUNCH_WAIT: Duration = Duration::from_secs(20);
 /// 떠 있는 앱이 열기 요청을 가져가기를 기다리는 시간.
 const HANDOFF_WAIT: Duration = Duration::from_secs(5);
+/// 설치된 글꼴은 짧게 재사용하고 새 글꼴 설치도 다음 갱신에 반영한다.
+const FONT_CACHE_TTL: Duration = Duration::from_secs(30);
 /// 바로 고치기 전에 남기는 백업을 문서마다 몇 개까지 두는가. 오래된 것부터 지운다.
 const BACKUPS_KEPT: usize = 20;
 
@@ -77,10 +80,42 @@ struct Cli {
 #[derive(Clone)]
 struct Server {
     fonts: Arc<Vec<PathBuf>>,
+    font_cache: Arc<Mutex<FontCache>>,
     password: Arc<Option<String>>,
     // 큰 문서 여러 개를 한꺼번에 그리면 메모리가 모자랄 수 있어 한 번에 하나만 처리한다.
     slots: Arc<Semaphore>,
     tool_router: ToolRouter<Self>,
+}
+
+#[derive(Default)]
+struct FontCache {
+    book: Option<FontBook>,
+    scanned_at: Option<Instant>,
+}
+
+struct FontLease<'a>(MutexGuard<'a, FontCache>);
+
+impl Deref for FontLease<'_> {
+    type Target = FontBook;
+    fn deref(&self) -> &FontBook {
+        self.0.book.as_ref().expect("font cache initialized")
+    }
+}
+
+impl DerefMut for FontLease<'_> {
+    fn deref_mut(&mut self) -> &mut FontBook {
+        self.0.book.as_mut().expect("font cache initialized")
+    }
+}
+
+impl Drop for FontLease<'_> {
+    fn drop(&mut self) {
+        self.0
+            .book
+            .as_mut()
+            .expect("font cache initialized")
+            .clear_document();
+    }
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -669,20 +704,37 @@ impl Server {
     fn new(fonts: Vec<PathBuf>, password: Option<String>) -> Self {
         Self {
             fonts: Arc::new(fonts),
+            font_cache: Arc::new(Mutex::new(FontCache::default())),
             password: Arc::new(password),
             slots: Arc::new(Semaphore::new(1)),
             tool_router: Self::tool_router(),
         }
     }
 
-    fn load_fonts(&self) -> Result<FontBook, String> {
-        let fonts = FontBook::scan(&self.fonts);
-        if fonts.face_count() == 0 {
-            return Err(
-                "글꼴을 하나도 찾지 못했습니다. 서버에 --font로 글꼴 폴더를 주세요".to_string(),
-            );
+    fn load_fonts(&self) -> Result<FontLease<'_>, String> {
+        let mut cache = match self.font_cache.lock() {
+            Ok(cache) => cache,
+            Err(poisoned) => {
+                let mut cache = poisoned.into_inner();
+                *cache = FontCache::default();
+                self.font_cache.clear_poison();
+                cache
+            }
+        };
+        if cache
+            .scanned_at
+            .is_none_or(|at| at.elapsed() >= FONT_CACHE_TTL)
+        {
+            let fonts = FontBook::scan(&self.fonts);
+            if fonts.face_count() == 0 {
+                return Err(
+                    "글꼴을 하나도 찾지 못했습니다. 서버에 --font로 글꼴 폴더를 주세요".to_string(),
+                );
+            }
+            cache.book = Some(fonts);
+            cache.scanned_at = Some(Instant::now());
         }
-        Ok(fonts)
+        Ok(FontLease(cache))
     }
 
     /// 주석마다 고른 자리를 여백과 함께 잘라 그린다. 앞에서부터 최대 [`MAX_NOTE_IMAGES`]장이다.
@@ -1127,4 +1179,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let service = Server::new(fonts, password).serve(stdio()).await?;
     service.waiting().await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn font_cache_refreshes_and_drops_embedded_fonts_after_each_request() {
+        let dir =
+            std::env::temp_dir().join(format!("ttoryeot-mcp-font-cache-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../assets/fonts/LiberationSans-Regular.ttf");
+        let bytes = std::fs::read(&source).unwrap();
+        std::fs::copy(&source, dir.join("first.ttf")).unwrap();
+        let server = Server::new(vec![dir.clone()], None);
+        let initial = {
+            let mut book = server.load_fonts().unwrap();
+            let count = book.face_count();
+            let mut document = hwp_core::Document::default();
+            document.bins.push(hwp_core::Blob {
+                id: "font".into(),
+                kind: hwp_core::BlobKind::Font,
+                data: bytes.into(),
+            });
+            assert_eq!(book.attach_document(&document), 1);
+            assert_eq!(book.document_face_count(), 1);
+            count
+        };
+        std::fs::copy(&source, dir.join("second.ttf")).unwrap();
+        {
+            let book = server.load_fonts().unwrap();
+            assert_eq!(book.face_count(), initial);
+            assert_eq!(book.document_face_count(), 0);
+        }
+        server.font_cache.lock().unwrap().scanned_at = Some(Instant::now() - FONT_CACHE_TTL);
+        assert_eq!(server.load_fonts().unwrap().face_count(), initial + 1);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }

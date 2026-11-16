@@ -17,7 +17,7 @@ them resolved. Agent skills for Hangul documents are in [skills](skills/).
 
 - HWP 5.x와 HWPX를 하나의 문서 모델로 읽습니다.
 - 글·표·그림·도형·수식·머리말·꼬리말·각주·단을 쪽에 배치합니다.
-- 쪽 크기·여백·테두리·쪽 번호·머리말 높이 등 한/글이 저장한 배치 값을 그대로 씁니다.
+- 쪽 크기·여백·쪽 번호·머리말 높이 등 한/글이 저장한 배치 값을 사용합니다. 쪽 테두리는 아직 그리지 않습니다.
 - 암호를 아는 HWP5(EncryptVersion 0·4)·HWPX 문서와 배포용 문서를 엽니다.
 - 문서를 PDF, 쪽 PNG, 평문, markdown으로 내보냅니다.
 - AI 도구가 문서를 읽도록 MCP 서버를 함께 제공합니다.
@@ -35,7 +35,7 @@ them resolved. Agent skills for Hangul documents are in [skills](skills/).
 PowerShell, 터미널에서 `ttoryeot --help`로 시작합니다.
 
 미리 빌드한 파일은 [Releases](https://github.com/207studio-oss/ttoryeot/releases)에서 운영체제에 맞는
-것 하나를 받습니다. 모든 파일에 두 실행 파일이 함께 들어 있고, `SHA256SUMS`로 내려받은 파일을 확인할 수 있습니다.
+것 하나를 받습니다. 운영체제별 파일마다 두 실행 파일이 함께 들어 있고, `SHA256SUMS`로 내려받은 파일을 확인할 수 있습니다.
 
 | 운영체제 | 받을 파일 |
 |---|---|
@@ -43,6 +43,9 @@ PowerShell, 터미널에서 `ttoryeot --help`로 시작합니다.
 | macOS, Apple 실리콘(M1 이후) | `ttoryeot-<버전>-macos-apple-silicon.tar.gz` |
 | macOS, Intel | `ttoryeot-<버전>-macos-intel.tar.gz` |
 | Linux x86_64 (glibc 2.17 이상) | `ttoryeot-<버전>-linux-x64.tar.gz` |
+
+iOS 앱에 엔진을 넣는 개발자는 `ttoryeot-<버전>-ios-xcframework.zip`을 받습니다. 실행 파일이 아니라 arm64 기기·
+시뮬레이터용 정적 라이브러리이고, 쓰는 법은 [iOS 문서](https://github.com/207studio-oss/ttoryeot/blob/main/ttoryeot-ffi/ios/README.md)에 있습니다.
 
 ### Windows
 
@@ -60,7 +63,7 @@ SmartScreen이 "Windows의 PC 보호" 창을 띄울 수 있습니다. 받은 파
 **추가 정보**를 누른 뒤 **실행**을 누릅니다. PowerShell에서는 다음과 같이 해시를 봅니다.
 
 ```powershell
-Get-FileHash .\ttoryeot-v0.3.1-windows-x64-setup.exe -Algorithm SHA256
+Get-FileHash .\ttoryeot-v0.3.2-windows-x64-setup.exe -Algorithm SHA256
 ```
 
 ### macOS
@@ -72,8 +75,8 @@ Mac의 칩에 맞는 파일을 받습니다. Apple 메뉴 › **이 Mac에 관�
 macOS 실행 파일은 Developer ID로 서명하고 Apple 공증을 받았습니다. 풀어서 `PATH`에 있는 폴더로 옮깁니다.
 
 ```bash
-tar -xzf ttoryeot-v0.3.1-macos-apple-silicon.tar.gz
-sudo install -m 755 ttoryeot-v0.3.1-macos-apple-silicon/ttoryeot* /usr/local/bin/
+tar -xzf ttoryeot-v0.3.2-macos-apple-silicon.tar.gz
+sudo install -m 755 ttoryeot-v0.3.2-macos-apple-silicon/ttoryeot* /usr/local/bin/
 ttoryeot --help
 ```
 
@@ -83,8 +86,8 @@ x86_64용 하나이고 glibc 2.17 이상(대부분의 배포판)에서 돕니다
 아래처럼 소스에서 설치하세요.
 
 ```bash
-tar -xzf ttoryeot-v0.3.1-linux-x64.tar.gz
-sudo install -m 755 ttoryeot-v0.3.1-linux-x64/ttoryeot* /usr/local/bin/
+tar -xzf ttoryeot-v0.3.2-linux-x64.tar.gz
+sudo install -m 755 ttoryeot-v0.3.2-linux-x64/ttoryeot* /usr/local/bin/
 ```
 
 ### 소스에서 설치
@@ -92,8 +95,8 @@ sudo install -m 755 ttoryeot-v0.3.1-linux-x64/ttoryeot* /usr/local/bin/
 `ttoryeot`(명령줄)와 `ttoryeot-mcp`(MCP 서버)는 별개 실행 파일입니다. 필요한 것만 설치하세요.
 
 ```bash
-cargo install --git https://github.com/207studio-oss/ttoryeot --tag v0.3.1 --locked ttoryeot-cli
-cargo install --git https://github.com/207studio-oss/ttoryeot --tag v0.3.1 --locked ttoryeot-mcp
+cargo install --git https://github.com/207studio-oss/ttoryeot --tag v0.3.2 --locked ttoryeot-cli
+cargo install --git https://github.com/207studio-oss/ttoryeot --tag v0.3.2 --locked ttoryeot-mcp
 ```
 
 Rust 1.99 이상이 필요합니다. 저장소에서 직접 빌드하려면 다음과 같이 합니다.

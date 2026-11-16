@@ -62,6 +62,33 @@ fn dump_not_hwp_is_reported_for_unimplemented_formats() {
 }
 
 #[test]
+fn named_output_formats_use_the_same_failure_shape_for_read_and_parse_errors() {
+    let invalid = temp_path("invalid.bin");
+    let missing = temp_path("missing.bin");
+    fs::write(&invalid, b"not a document").unwrap();
+    for format in ["text", "lines", "numbering-raw", "shape-fills"] {
+        for input in [&invalid, &missing] {
+            let output = Command::new(env!("CARGO_BIN_EXE_hwp-dump"))
+                .args(["--format", format])
+                .arg(input)
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(value["ok"], false, "{format}");
+            assert_eq!(
+                value["file"],
+                input.file_name().unwrap().to_string_lossy().as_ref(),
+                "{format}"
+            );
+            assert!(value["fatal"]["kind"].is_string(), "{format}");
+            assert!(value.get("schema").is_none(), "{format}");
+        }
+    }
+    fs::remove_file(invalid).unwrap();
+}
+
+#[test]
 fn dump_rejects_missing_path() {
     let output = Command::new(env!("CARGO_BIN_EXE_hwp-dump"))
         .output()

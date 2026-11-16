@@ -1,8 +1,10 @@
 #!/bin/zsh
-# GitHub Actions 없이 이 Mac에서 CLI·MCP 릴리스 받기 파일을 운영체제별로 만든다.
+# GitHub Actions 없이 이 Mac에서 CLI·MCP 릴리스 받기 파일을 운영체제별로, iOS XCFramework와 함께 만든다.
 # 올리지 않고, 서명·공증하지 않는다. usage: tools/release-local.sh <version 예: v0.3.0> <out-dir>
 # 필요: rustup target aarch64/x86_64-apple-darwin, x86_64-pc-windows-gnu, x86_64-unknown-linux-gnu,
-#       mingw-w64(x86_64-w64-mingw32-gcc), zig + cargo-zigbuild(리눅스 glibc 2.17), makensis(Windows 설치 파일)
+#       aarch64-apple-ios, aarch64-apple-ios-sim,
+#       mingw-w64(x86_64-w64-mingw32-gcc), zig + cargo-zigbuild(리눅스 glibc 2.17), makensis(Windows 설치 파일),
+#       Xcode(xcodebuild, iOS XCFramework)
 #
 # 만드는 것(<ver>는 넘긴 버전 그대로):
 #   ttoryeot-<ver>-windows-x64-setup.exe        Windows 설치 파일(NSIS, 사용자별, 서명 안 함)
@@ -10,6 +12,7 @@
 #   ttoryeot-<ver>-macos-apple-silicon.tar.gz   aarch64-apple-darwin
 #   ttoryeot-<ver>-macos-intel.tar.gz           x86_64-apple-darwin
 #   ttoryeot-<ver>-linux-x64.tar.gz             x86_64-unknown-linux-gnu, glibc 2.17 이상
+#   ttoryeot-<ver>-ios-xcframework.zip          Ttoryeot.xcframework(arm64 iOS 기기·시뮬레이터 정적 라이브러리)
 #   SHA256SUMS
 set -eu
 (( $# == 2 )) || { echo "usage: $0 <version 예: v0.3.0> <out-dir>" >&2; exit 2; }
@@ -18,6 +21,7 @@ cd $root
 [[ -z $(git status --porcelain) ]] || { echo "작업 트리가 깨끗하지 않습니다" >&2; exit 1; }
 [[ $out != $root && $out != $root/* ]] || { echo "out-dir은 저장소 밖에 두세요" >&2; exit 1; }
 command -v makensis >/dev/null || { echo "makensis가 없습니다(brew install makensis)" >&2; exit 1; }
+command -v xcodebuild >/dev/null || { echo "xcodebuild가 없습니다(Xcode 설치)" >&2; exit 1; }
 # 설치 파일 버전 정보: v0.3.0-rc.1 -> 표시 0.3.0-rc.1, 숫자 0.3.0.0
 display_version=${version#v}
 numeric=${display_version%%[-+]*}
@@ -31,6 +35,15 @@ export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--remap-path-prefix=$HOME=~ --remap-p
 host=$(rustc -vV | awk '/host/ {print $2}')
 mkdir -p $out
 rm -f $out/ttoryeot-*.tar.gz(N) $out/ttoryeot-*.zip(N) $out/ttoryeot-*-setup.exe(N) $out/SHA256SUMS
+
+# 받기 파일마다 넣는 라이선스·고지 파일과 빌드 정보. usage: notices <폴더> <대상>
+notices() {
+  mkdir -p $1/third-party
+  cp LICENSING.md LICENSE-AGPL-3.0 ttoryeot-alloc/LICENSE-MIT ttoryeot-alloc/LICENSE-APACHE THIRD_PARTY_NOTICES.md $1/
+  cp third-party/dependencies.md $1/third-party/
+  printf 'version %s\ntarget %s\ncommit %s\nbuilt %s\nhost %s (local, unsigned)\n' \
+    $version $2 $sha "$(date -u +%FT%TZ)" "$(uname -sm)" > $1/BUILD.txt
+}
 
 for target in aarch64-apple-darwin x86_64-apple-darwin x86_64-pc-windows-gnu x86_64-unknown-linux-gnu; do
   case $target in
@@ -48,12 +61,10 @@ for target in aarch64-apple-darwin x86_64-apple-darwin x86_64-pc-windows-gnu x86
   if [[ $target == $host ]]; then
     $bin/ttoryeot$suffix --version; $bin/ttoryeot-mcp$suffix --version
   fi
-  stage=$out/$name; rm -rf $stage; mkdir -p $stage/third-party
+  stage=$out/$name; rm -rf $stage; mkdir -p $stage
   cp $bin/ttoryeot$suffix $bin/ttoryeot-mcp$suffix $stage/
-  cp README.md LICENSING.md LICENSE-AGPL-3.0 ttoryeot-alloc/LICENSE-MIT ttoryeot-alloc/LICENSE-APACHE THIRD_PARTY_NOTICES.md CHANGELOG.md $stage/
-  cp third-party/dependencies.md $stage/third-party/
-  printf 'version %s\ntarget %s\ncommit %s\nbuilt %s\nhost %s (local, unsigned)\n' \
-    $version $target $sha "$(date -u +%FT%TZ)" "$(uname -sm)" > $stage/BUILD.txt
+  cp README.md CHANGELOG.md $stage/
+  notices $stage $target
   case $target in
     *windows*)
       (cd $out && zip -qrX $name.zip $name)
@@ -65,4 +76,14 @@ for target in aarch64-apple-darwin x86_64-apple-darwin x86_64-pc-windows-gnu x86
   esac
   rm -rf $stage
 done
+
+# iOS XCFramework. 위에서 정한 RUSTFLAGS와 target 폴더를 그대로 쓴다. SwiftPM binaryTarget이 읽도록 zip
+# 맨 위에는 Ttoryeot.xcframework만 두고, 라이선스·고지 파일과 빌드 정보는 그 안의 LICENSES/에 넣는다.
+name=ttoryeot-$version-ios-xcframework
+stage=$out/$name; rm -rf $stage; mkdir -p $stage
+CARGO_TARGET_DIR=$target_dir ttoryeot-ffi/ios/build-ios.sh $stage/Ttoryeot.xcframework
+notices $stage/Ttoryeot.xcframework/LICENSES aarch64-apple-ios+aarch64-apple-ios-sim
+(cd $stage && zip -qrX $out/$name.zip Ttoryeot.xcframework)
+rm -rf $stage
+
 (cd $out && shasum -a 256 ttoryeot-$version-*.exe ttoryeot-$version-*.zip ttoryeot-$version-*.tar.gz > SHA256SUMS && cat SHA256SUMS)

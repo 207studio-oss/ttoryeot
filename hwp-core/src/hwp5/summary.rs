@@ -26,7 +26,8 @@ pub(super) fn parse(data: &[u8]) -> Metadata {
     let count = u32_at(data, section.saturating_add(4)).unwrap_or(0) as usize;
     for index in 0..count.min(256) {
         let entry = section.saturating_add(8).saturating_add(index * 8);
-        let (Some(id), Some(offset)) = (u32_at(data, entry), u32_at(data, entry + 4)) else {
+        let (Some(id), Some(offset)) = (u32_at(data, entry), u32_at(data, entry.saturating_add(4)))
+        else {
             break;
         };
         let value = value_at(data, section.saturating_add(offset as usize));

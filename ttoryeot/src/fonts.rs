@@ -1,5 +1,5 @@
 //! 글꼴 색인. 받은 폴더들의 TrueType/OpenType 글꼴을 이름으로 찾고, 글자마다 글리프 번호와 폭을 낸다.
-//! 글꼴 파일은 색인할 때 이름표만 읽고, 그릴 때 처음 쓰는 얼굴만 메모리에 올린다.
+//! 색인할 때 글꼴 파일을 읽어 이름표를 남기고, 그릴 때 처음 쓰는 얼굴만 메모리에 보관한다.
 
 use crate::scene::PathOp;
 use hwp_core::{BlobKind, Document};
@@ -174,6 +174,9 @@ pub struct FontBook {
     names: HashMap<String, Vec<FaceId>>,
     files: HashMap<PathBuf, Bytes>,
     loaded: HashMap<FaceId, Loaded>,
+    /// 올리지 않은 얼굴이 가진 글자 범위. 대체 글꼴을 고를 때 그 글자가 없는 얼굴까지
+    /// 메모리에 올리지 않으려고, 파일을 한 번 읽어 범위만 남기고 바이트는 버린다.
+    coverage: HashMap<FaceId, Coverage>,
     /// 다음에 붙일 얼굴 번호. 문서를 바꿔도 줄이지 않아 지난 `Page`의 `FaceId`가 새 얼굴을
     /// 가리키지 않는다.
     next_face: FaceId,
@@ -194,8 +197,9 @@ impl FontBook {
     pub fn scan(paths: &[PathBuf]) -> Self {
         let mut book = Self::default();
         let mut files = Vec::new();
+        let mut directories = HashSet::new();
         for path in paths {
-            collect_font_files(path, &mut files);
+            collect_font_files(path, &mut files, &mut directories);
         }
         for info in files.iter().filter(|path| is_hft_info(path)) {
             if let Ok(bytes) = std::fs::read(info) {
@@ -291,6 +295,11 @@ impl FontBook {
         self.faces.values().filter(|face| face.embedded).count()
     }
 
+    /// 현재 문서의 내장 글꼴을 놓는다. 이 글꼴로 만든 쪽은 먼저 PDF로 써야 한다.
+    pub fn clear_document(&mut self) {
+        self.detach_document();
+    }
+
     fn detach_document(&mut self) {
         let embedded: HashSet<FaceId> = self
             .faces
@@ -307,6 +316,7 @@ impl FontBook {
         }
         self.names.retain(|_, ids| !ids.is_empty());
         self.loaded.retain(|id, _| !embedded.contains(id));
+        self.coverage.retain(|id, _| !embedded.contains(id));
         self.files
             .retain(|path, _| !path.starts_with(Path::new(EMBEDDED_ROOT)));
     }
@@ -484,6 +494,30 @@ impl FontBook {
         self.loaded.get_mut(&id)
     }
 
+    /// 이 얼굴의 문자표에 그 글자가 있는가. 이미 올린 얼굴은 [`Self::glyph`]로 보고, 올리지 않은
+    /// 얼굴은 메모리에 올리지 않고 글자 범위만 읽어 둔다. 읽지 못하는 얼굴은 거짓이다.
+    pub fn covers(&mut self, id: FaceId, character: char) -> bool {
+        if self.loaded.contains_key(&id) {
+            return self.glyph(id, character).is_some();
+        }
+        if let Some(coverage) = self.coverage.get(&id) {
+            return coverage.contains(character);
+        }
+        let Some(info) = self.faces.get(&id) else {
+            return false;
+        };
+        let coverage = match self.files.get(&info.path) {
+            Some(data) => Coverage::of((**data).as_ref(), info.index),
+            None => std::fs::read(&info.path)
+                .ok()
+                .and_then(|data| Coverage::of(&data, info.index)),
+        }
+        .unwrap_or_default();
+        let hit = coverage.contains(character);
+        self.coverage.insert(id, coverage);
+        hit
+    }
+
     /// 이 얼굴에 그 글자가 있으면 글리프와 폭.
     pub fn glyph(&mut self, id: FaceId, character: char) -> Option<GlyphInfo> {
         let index = self.faces.get(&id)?.index;
@@ -624,6 +658,34 @@ impl OutlinePen for PathPen {
 }
 
 /// 글자들의 잉크 상자(em 단위). 윤곽선 좌표는 글꼴 단위이고 위가 +다.
+/// 얼굴 하나의 문자표가 덮는 글자 범위(양 끝 포함, 정렬됨).
+#[derive(Default)]
+struct Coverage(Vec<(u32, u32)>);
+
+impl Coverage {
+    fn of(data: &[u8], index: u32) -> Option<Self> {
+        let font = FontRef::from_index(data, index).ok()?;
+        let mut codepoints: Vec<u32> = font.charmap().mappings().map(|(cp, _)| cp).collect();
+        codepoints.sort_unstable();
+        codepoints.dedup();
+        let mut ranges: Vec<(u32, u32)> = Vec::new();
+        for codepoint in codepoints {
+            match ranges.last_mut() {
+                Some((_, end)) if codepoint == *end + 1 => *end = codepoint,
+                _ => ranges.push((codepoint, codepoint)),
+            }
+        }
+        ranges.shrink_to_fit();
+        Some(Self(ranges))
+    }
+
+    fn contains(&self, character: char) -> bool {
+        let codepoint = u32::from(character);
+        let after = self.0.partition_point(|(start, _)| *start <= codepoint);
+        after > 0 && codepoint <= self.0[after - 1].1
+    }
+}
+
 fn ink_of(data: &[u8], index: u32, text: &str) -> Ink {
     let Ok(font) = FontRef::from_index(data, index) else {
         return Ink::default();
@@ -795,23 +857,31 @@ fn cubic_extrema(p0: f32, c0: f32, c1: f32, p1: f32, out: &mut [f32], count: &mu
 }
 
 /// 폴더면 하위 폴더까지 훑고, 파일이면 그 파일 하나를 받는다.
-fn collect_font_files(path: &Path, out: &mut Vec<PathBuf>) {
-    if path.is_dir() {
-        let Ok(entries) = std::fs::read_dir(path) else {
-            return;
-        };
-        let mut children: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
-        children.sort();
-        for child in children {
-            collect_font_files(&child, out);
+fn collect_font_files(path: &Path, out: &mut Vec<PathBuf>, directories: &mut HashSet<PathBuf>) {
+    let mut pending = vec![path.to_path_buf()];
+    while let Some(path) = pending.pop() {
+        if path.is_dir() {
+            let Ok(canonical) = std::fs::canonicalize(&path) else {
+                continue;
+            };
+            if !directories.insert(canonical) {
+                continue;
+            }
+            let Ok(entries) = std::fs::read_dir(&path) else {
+                continue;
+            };
+            let mut children: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
+            children.sort();
+            pending.extend(children.into_iter().rev());
+            continue;
         }
-        return;
-    }
-    let extension = path
-        .extension()
-        .map(|extension| extension.to_string_lossy().to_ascii_lowercase());
-    if matches!(extension.as_deref(), Some("ttf" | "otf" | "ttc" | "otc")) || is_hft_info(path) {
-        out.push(path.to_path_buf());
+        let extension = path
+            .extension()
+            .map(|extension| extension.to_string_lossy().to_ascii_lowercase());
+        if matches!(extension.as_deref(), Some("ttf" | "otf" | "ttc" | "otc")) || is_hft_info(&path)
+        {
+            out.push(path);
+        }
     }
 }
 
@@ -826,6 +896,31 @@ mod tests {
     use crate::subst::Rules;
     use hwp_core::{Blob, BlobKind, Document, FontFace};
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn coverage_answers_without_loading_the_face() {
+        let path = PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../assets/fonts/LiberationSans-Regular.ttf"
+        ));
+        // 폴더에서 색인한 얼굴: 바이트를 들고 있지 않다.
+        let mut book = FontBook::scan(std::slice::from_ref(&path));
+        let id = book.any_face().expect("Liberation Sans");
+        assert!(book.covers(id, 'A'));
+        assert!(book.covers(id, 'é'));
+        assert!(!book.covers(id, '가'));
+        assert!(!book.covers(id, '\u{F8FF0}'));
+        // 범위로 본 답과 얼굴을 올려 찾은 글리프가 같다.
+        let mut loaded = FontBook::scan(&[path]);
+        for character in ['A', 'z', ' ', 'é', '€', 'ſ', '가', '\u{F8FF0}'] {
+            assert_eq!(
+                book.covers(id, character),
+                loaded.glyph(id, character).is_some(),
+                "{character:?}"
+            );
+        }
+        assert!(book.loaded.is_empty() && book.files.is_empty());
+    }
 
     fn face(path: &str, weight: f32, embedded: bool) -> FaceInfo {
         FaceInfo {

@@ -1,8 +1,9 @@
 # 의존 크레이트 라이선스
 
 이 파일은 `cargo about generate`로 만듭니다. 직접 고치지 말고 `tools/licenses.sh`를 실행하세요.
-저장소 안의 크레이트(`hwp-core`, `ttoryeot`, `ttoryeot-cli`, `ttoryeot-score`)는 이 저장소의
-라이선스를 따르므로 여기에 넣지 않습니다.
+저장소 안의 크레이트(`ttoryeot-hwp-core`, `ttoryeot`, `ttoryeot-cli`, `ttoryeot-mcp`, `ttoryeot-alloc`)도
+목록에 나오며, 이 저장소의 라이선스([LICENSING.md](../LICENSING.md))를 따릅니다. 올리지 않는
+`ttoryeot-ffi`와 `ttoryeot-score`는 목록에 없고 같은 라이선스를 따릅니다.
 
 ## 라이선스 요약
 
@@ -39,10 +40,10 @@ OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ### GNU Affero General Public License v3.0 only
 
-- ttoryeot-hwp-core 0.3.0
-- ttoryeot 0.3.0
-- ttoryeot-cli 0.3.0
-- ttoryeot-mcp 0.3.0
+- ttoryeot-hwp-core 0.3.2
+- ttoryeot 0.3.2
+- ttoryeot-cli 0.3.2
+- ttoryeot-mcp 0.3.2
 
 ```text
 GNU AFFERO GENERAL PUBLIC LICENSE
@@ -285,7 +286,7 @@ You should also get your employer (if you work as a programmer) or school, if an
 
 ### Apache License 2.0
 
-- ttoryeot-alloc 0.3.0
+- ttoryeot-alloc 0.3.2
 - cmov 0.5.4
 - ctutils 0.4.7
 - kurbo 0.13.1

@@ -12,8 +12,8 @@
 ## 받기 파일 만들기
 
 필요한 도구는 rustup 대상 `aarch64-apple-darwin`, `x86_64-apple-darwin`, `x86_64-pc-windows-gnu`,
-`x86_64-unknown-linux-gnu`, mingw-w64(`brew install mingw-w64`), zig와 cargo-zigbuild, NSIS
-(`brew install makensis`)입니다.
+`x86_64-unknown-linux-gnu`, `aarch64-apple-ios`, `aarch64-apple-ios-sim`, mingw-w64(`brew install mingw-w64`),
+zig와 cargo-zigbuild, NSIS(`brew install makensis`), Xcode입니다.
 
 ```bash
 tools/release-local.sh v0.3.0 ../ttoryeot-dist
@@ -29,15 +29,28 @@ tools/release-local.sh v0.3.0 ../ttoryeot-dist
 | `ttoryeot-v0.3.0-macos-apple-silicon.tar.gz` | `aarch64-apple-darwin` |
 | `ttoryeot-v0.3.0-macos-intel.tar.gz` | `x86_64-apple-darwin` |
 | `ttoryeot-v0.3.0-linux-x64.tar.gz` | `x86_64-unknown-linux-gnu`, cargo-zigbuild로 glibc 2.17 |
-| `SHA256SUMS` | 위 다섯 파일의 SHA-256 |
+| `ttoryeot-v0.3.0-ios-xcframework.zip` | iOS XCFramework(`aarch64-apple-ios`, `aarch64-apple-ios-sim` 정적 라이브러리) |
+| `SHA256SUMS` | 위 여섯 파일의 SHA-256 |
 
-압축 파일 안의 폴더 이름은 압축 파일 이름과 같습니다(`ttoryeot-v0.3.0-macos-intel/` 등). 묶음에는
+운영체제별 압축 파일 안의 폴더 이름은 압축 파일 이름과 같습니다(`ttoryeot-v0.3.0-macos-intel/` 등). 묶음에는
 실행 파일(`ttoryeot`, `ttoryeot-mcp`), README, LICENSING.md, LICENSE-AGPL-3.0,
 `ttoryeot-alloc/LICENSE-MIT`·`ttoryeot-alloc/LICENSE-APACHE`(할당자), THIRD_PARTY_NOTICES, CHANGELOG, 의존 크레이트
 라이선스 묶음(krilla 포함, `third-party/dependencies.md`), 빌드 정보(`BUILD.txt`)가 들어갑니다.
 
 스크립트는 호출한 쪽의 `RUSTFLAGS` 뒤에 `--remap-path-prefix`를 붙여 홈 폴더, 저장소, cargo target
-폴더 경로가 실행 파일에 남지 않게 합니다. 올리기 전에 모든 받기 파일을 풀어 개인 경로가 없는지 확인합니다.
+폴더 경로가 실행 파일과 라이브러리에 남지 않게 합니다. 올리기 전에 모든 받기 파일을 풀어 개인 경로가 없는지 확인합니다.
+
+### iOS XCFramework
+
+`ttoryeot-ffi/ios/build-ios.sh`로 만든 `Ttoryeot.xcframework`를 zip 맨 위에 그대로 넣습니다. SwiftPM
+`binaryTarget`이 읽는 모양이고, checksum은 `SHA256SUMS`에 적힌 이 zip의 값과 같습니다. 위와 같은
+라이선스·고지 파일과 `BUILD.txt`는 XCFramework 안의 `LICENSES/`에 있습니다. 서명하지 않습니다.
+올리기 전에 zip을 풀어 켜진 arm64 iPad 시뮬레이터에서 확인합니다.
+
+```bash
+unzip -q ../ttoryeot-dist/ttoryeot-v0.3.0-ios-xcframework.zip -d /tmp/ttoryeot-ios
+./ttoryeot-ffi/ios/verify-ios.sh /tmp/ttoryeot-ios/Ttoryeot.xcframework <시뮬레이터-ID>
+```
 
 ### Windows 설치 파일
 

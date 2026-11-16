@@ -10,6 +10,7 @@ use crate::scene::Rect;
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// 저장 형식의 판. 읽을 수 없는 판이면 지우지 않고 오류로 알린다.
 pub const FORMAT: u32 = 1;
@@ -203,24 +204,41 @@ pub fn save(dir: &Path, book: &NoteBook) -> Result<(), String> {
         .map_err(|error| format!("주석 폴더를 만들지 못했습니다: {error}"))?;
     let path = file_path(dir, Path::new(&book.document));
     let text = serde_json::to_string_pretty(book).map_err(|error| error.to_string())?;
-    write_atomic(&path, text.as_bytes())
+    write_atomic(&path, text.as_bytes(), true)
         .map_err(|error| format!("주석 파일을 쓰지 못했습니다: {error}"))
 }
 
 /// 같은 폴더의 임시 파일에 다 쓴 뒤 이름을 바꿔 넣는다.
-fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    let mut name = path.file_name().unwrap_or_default().to_os_string();
-    name.push(".tmp");
-    let temp = path.with_file_name(name);
-    let written = std::fs::File::create(&temp).and_then(|mut file| {
-        file.write_all(bytes)?;
-        file.sync_all()
-    });
-    written
-        .and_then(|()| std::fs::rename(&temp, path))
-        .inspect_err(|_| {
-            let _ = std::fs::remove_file(&temp);
-        })
+fn write_atomic(path: &Path, bytes: &[u8], durable: bool) -> std::io::Result<()> {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    for _ in 0..128 {
+        let mut name = path.file_name().unwrap_or_default().to_os_string();
+        let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
+        name.push(format!(".{}.{}.tmp", std::process::id(), sequence));
+        let temp = path.with_file_name(name);
+        let mut file = match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        };
+        let written = file
+            .write_all(bytes)
+            .and_then(|()| if durable { file.sync_all() } else { Ok(()) });
+        drop(file);
+        return written
+            .and_then(|()| std::fs::rename(&temp, path))
+            .inspect_err(|_| {
+                let _ = std::fs::remove_file(&temp);
+            });
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "could not create a unique temporary file",
+    ))
 }
 
 // 데스크톱 앱과 에이전트 도구(MCP 서버) 사이의 문서 열기. 둘은 같은 주석 폴더를 본다.
@@ -257,7 +275,8 @@ pub struct OpenRequest {
 pub fn announce(dir: &Path, presence: &Presence) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
     let text = serde_json::to_string(presence).map_err(|error| error.to_string())?;
-    write_atomic(&dir.join(PRESENCE_FILE), text.as_bytes()).map_err(|error| error.to_string())
+    write_atomic(&dir.join(PRESENCE_FILE), text.as_bytes(), false)
+        .map_err(|error| error.to_string())
 }
 
 /// 앱이 끝날 때 부른다. 다른 앱이 그 뒤에 알렸으면 그 알림은 남긴다.
@@ -285,7 +304,7 @@ pub fn post_open(dir: &Path, request: &OpenRequest, token: &str) -> Result<PathB
         .map_err(|error| format!("열기 요청 폴더를 만들지 못했습니다: {error}"))?;
     let path = inbox.join(format!("{token}.json"));
     let text = serde_json::to_string(request).map_err(|error| error.to_string())?;
-    write_atomic(&path, text.as_bytes())
+    write_atomic(&path, text.as_bytes(), true)
         .map_err(|error| format!("열기 요청을 쓰지 못했습니다: {error}"))?;
     Ok(path)
 }
@@ -325,6 +344,32 @@ fn fnv(bytes: &[u8]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn concurrent_atomic_writers_never_share_a_temporary_file() {
+        let dir = scratch("concurrent");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("note.json");
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+        std::thread::scope(|scope| {
+            for byte in 0..8u8 {
+                let path = &path;
+                let barrier = barrier.clone();
+                scope.spawn(move || {
+                    let content = vec![byte; 64 * 1024];
+                    barrier.wait();
+                    for _ in 0..20 {
+                        write_atomic(path, &content, false).unwrap();
+                    }
+                });
+            }
+        });
+        let content = std::fs::read(&path).unwrap();
+        assert_eq!(content.len(), 64 * 1024);
+        assert!(content.iter().all(|byte| *byte == content[0]));
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     fn scratch(name: &str) -> PathBuf {
         let dir =

@@ -1,5 +1,5 @@
 use std::cell::Cell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Write};
 
 const EOCD_MAGIC: u32 = 0x0605_4b50;
@@ -311,20 +311,50 @@ fn entry_range(data: &[u8], entry: &Entry) -> Option<(usize, usize)> {
 }
 
 fn mark_invalid_entries(data: &[u8], entries: &mut [Entry]) {
-    let mut ranges: Vec<(usize, usize)> = Vec::new();
+    let mut ranges = RangeTracker::default();
     for entry in entries {
         let Some((start, end)) = entry_range(data, entry) else {
             entry.invalid = true;
             continue;
         };
-        if ranges
-            .iter()
-            .any(|(earlier_start, earlier_end)| start < *earlier_end && *earlier_start < end)
-        {
+        if !ranges.insert(start, end) {
             entry.invalid = true;
-            continue;
         }
-        ranges.push((start, end));
+    }
+}
+
+// Accepted nonempty ranges cannot overlap. Empty ranges need separate tracking to preserve
+// the original strict-endpoint overlap rule, including empty ranges inside another payload.
+#[derive(Default)]
+struct RangeTracker {
+    ranges: BTreeMap<usize, usize>,
+    points: BTreeSet<usize>,
+}
+
+impl RangeTracker {
+    fn insert(&mut self, start: usize, end: usize) -> bool {
+        use std::ops::Bound::Excluded;
+
+        if self
+            .ranges
+            .range(..end)
+            .next_back()
+            .is_some_and(|(_, &previous_end)| previous_end > start)
+            || (start < end
+                && self
+                    .points
+                    .range((Excluded(start), Excluded(end)))
+                    .next()
+                    .is_some())
+        {
+            return false;
+        }
+        if start == end {
+            self.points.insert(start);
+        } else {
+            self.ranges.insert(start, end);
+        }
+        true
     }
 }
 
@@ -367,4 +397,27 @@ fn read_u32(data: &[u8], offset: usize) -> Option<u32> {
     let end = offset.checked_add(4)?;
     let bytes = data.get(offset..end)?;
     Some(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+}
+
+#[cfg(test)]
+mod overlap_tests {
+    use super::RangeTracker;
+
+    #[test]
+    fn sorted_ranges_match_original_first_entry_wins_rule() {
+        let mut seed = 17u64;
+        let mut tracker = RangeTracker::default();
+        let mut accepted = Vec::new();
+        for _ in 0..20_000 {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let start = (seed >> 32) as usize % 1000;
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let end = start + (seed >> 32) as usize % 12;
+            let expected = !accepted.iter().any(|&(a, b)| start < b && a < end);
+            assert_eq!(tracker.insert(start, end), expected, "{start}..{end}");
+            if expected {
+                accepted.push((start, end));
+            }
+        }
+    }
 }

@@ -189,6 +189,11 @@ impl<'a> Editor<'a> {
         Ok(Self { zip, scans })
     }
 
+    /// 문서에 변경 추적 표시가 있으면 참이다. 이 경우 글을 바꿀 수 없다.
+    pub fn has_tracked_changes(&self) -> bool {
+        self.scans.iter().any(|scan| scan.tracked)
+    }
+
     /// 문서에서 `needle`이 있는 곳을 모두 문서 차례로 돌려준다.
     pub fn find(&self, needle: &str) -> Result<Vec<TextMatch>, EditError> {
         if needle.is_empty() {
@@ -218,7 +223,7 @@ impl<'a> Editor<'a> {
         }
         check_replacement(replacement)?;
         let scans = &self.scans;
-        if scans.iter().any(|scan| scan.tracked) {
+        if self.has_tracked_changes() {
             return Err(EditError::TrackedChanges);
         }
         let hits = collect(scans, needle);
@@ -256,7 +261,7 @@ impl<'a> Editor<'a> {
     ) -> Result<Vec<u8>, EditError> {
         check_replacement(text)?;
         let scans = &self.scans;
-        if scans.iter().any(|scan| scan.tracked) {
+        if self.has_tracked_changes() {
             return Err(EditError::TrackedChanges);
         }
         let scan = scans

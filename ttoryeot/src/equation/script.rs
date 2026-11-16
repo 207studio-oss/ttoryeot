@@ -278,36 +278,36 @@ fn is_style(key: &Key) -> bool {
 
 /// 영문자 이어짐을 낱말로 나눈다. 통째로 이름이면 그대로다.
 fn split_word(word: &str) -> Vec<String> {
-    if word.is_empty() {
-        return Vec::new();
-    }
-    if keyword(word).is_some() {
-        return vec![word.to_string()];
-    }
-    for prefix in ["bold", "rm", "it"] {
-        if let Some(rest) = word.strip_prefix(prefix)
-            && !rest.is_empty()
+    // tokenize supplies ASCII letters. All recognized words are at most 10 bytes; leave
+    // room for future names while keeping work per prefix bounded.
+    const MAX_KEYWORD: usize = 32;
+    let mut rest = word;
+    let mut parts = Vec::new();
+    while !rest.is_empty() {
+        if rest.len() <= MAX_KEYWORD && keyword(rest).is_some() {
+            parts.push(rest.to_owned());
+            break;
+        }
+        if let Some(prefix) = ["bold", "rm", "it"]
+            .into_iter()
+            .find(|prefix| rest.starts_with(prefix) && rest.len() > prefix.len())
         {
-            let mut parts = vec![prefix.to_string()];
-            parts.extend(split_word(rest));
-            return parts;
+            parts.push(prefix.to_owned());
+            rest = &rest[prefix.len()..];
+            continue;
+        }
+        let head = (4..=rest.len().saturating_sub(1).min(MAX_KEYWORD))
+            .rev()
+            .find(|&length| keyword(&rest[..length]).is_some_and(|key| !is_style(&key)));
+        if let Some(length) = head {
+            parts.push(rest[..length].to_owned());
+            rest = &rest[length..];
+        } else {
+            parts.push(rest.to_owned());
+            break;
         }
     }
-    let chars: Vec<char> = word.chars().collect();
-    if chars.len() > 3 {
-        for length in (4..chars.len()).rev() {
-            let head: String = chars[..length].iter().collect();
-            if let Some(key) = keyword(&head)
-                && !is_style(&key)
-            {
-                let tail: String = chars[length..].iter().collect();
-                let mut parts = vec![head];
-                parts.extend(split_word(&tail));
-                return parts;
-            }
-        }
-    }
-    vec![word.to_string()]
+    parts
 }
 
 fn is_math_symbol(character: char) -> bool {
@@ -1122,6 +1122,66 @@ pub(super) fn rows_of(list: &[Node]) -> Vec<Vec<Node>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn long_equation_words_do_not_recurse_or_scan_quadratically() {
+        let plain = "q".repeat(100_000);
+        assert_eq!(split_word(&plain), vec![plain]);
+        let styles = "rm".repeat(20_000) + "alpha";
+        let parts = split_word(&styles);
+        assert_eq!(parts.len(), 20_001);
+        assert_eq!(parts.last().map(String::as_str), Some("alpha"));
+    }
+
+    #[test]
+    fn word_split_matches_previous_algorithm() {
+        fn old(word: &str) -> Vec<String> {
+            if word.is_empty() {
+                return vec![];
+            }
+            if keyword(word).is_some() {
+                return vec![word.to_owned()];
+            }
+            for prefix in ["bold", "rm", "it"] {
+                if let Some(rest) = word.strip_prefix(prefix)
+                    && !rest.is_empty()
+                {
+                    let mut parts = vec![prefix.to_owned()];
+                    parts.extend(old(rest));
+                    return parts;
+                }
+            }
+            for length in (4..word.len()).rev() {
+                if keyword(&word[..length]).is_some_and(|key| !is_style(&key)) {
+                    let mut parts = vec![word[..length].to_owned()];
+                    parts.extend(old(&word[length..]));
+                    return parts;
+                }
+            }
+            vec![word.to_owned()]
+        }
+        let words = [
+            "rm",
+            "bold",
+            "it",
+            "alpha",
+            "sqrt",
+            "rightarrow",
+            "varepsilon",
+            "q",
+            "x",
+            "SQRT",
+            "ARROW",
+        ];
+        for a in words {
+            for b in words {
+                for c in words {
+                    let word = format!("{a}{b}{c}");
+                    assert_eq!(split_word(&word), old(&word), "{word}");
+                }
+            }
+        }
+    }
 
     #[test]
     fn keywords_split_like_the_script() {
