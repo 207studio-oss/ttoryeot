@@ -1471,7 +1471,19 @@ impl<'a> Renderer<'a> {
                     let mut rect =
                         self.floating_rect(item, section, pp, left, avail_width, origin.1);
                     rect.y = origin.1 + pt(object_margins(item).top);
-                    let rect = self.below_floats(item, rect, body_bottom).unwrap_or(rect);
+                    // 같은 줄에서 밀린 개체가 앞 개체 아래에 들어가지 않으면 다음 쪽으로 넘긴다.
+                    // 한 쪽에 겹쳐 놓으면 뒤 개체가 앞 개체를 가려 쪽이 사라진 것처럼 보인다.
+                    let rect = match self.below_floats(item, rect, body_bottom) {
+                        Some(rect) => rect,
+                        None => {
+                            self.next_column(section, true);
+                            let left = origin.0 + self.column as f32 * self.column_step;
+                            let mut rect =
+                                self.floating_rect(item, section, pp, left, avail_width, origin.1);
+                            rect.y = origin.1 + pt(object_margins(item).top);
+                            self.below_floats(item, rect, body_bottom).unwrap_or(rect)
+                        }
+                    };
                     if let RunItem::Table(table) = item
                         && let Some(bottom) = self.place_split_table(
                             table,

@@ -353,6 +353,39 @@ fn picture_without_image_data_has_no_ink() {
 }
 
 #[test]
+fn three_tall_pictures_in_one_paragraph_get_their_own_pages() {
+    let picture = |height| {
+        RunItem::Picture(Picture {
+            width: 42520.0,
+            height,
+            pos: Pos {
+                treat_as_char: false,
+                flow_with_text: true,
+                vert_rel_to: "PARA".to_string(),
+                horz_rel_to: "COLUMN".to_string(),
+                ..Pos::default()
+            },
+            ..Picture::default()
+        })
+    };
+    let doc = document(vec![paragraph(vec![
+        picture(34122.0),
+        picture(61129.0),
+        picture(59887.0),
+    ])]);
+    let parts = components(&doc);
+    assert_eq!(parts.len(), 3);
+    for (index, page) in parts.iter().enumerate() {
+        assert_eq!(
+            find(page, Kind::Picture).len(),
+            1,
+            "page {} should hold exactly one picture",
+            index + 1
+        );
+    }
+}
+
+#[test]
 fn floating_shape_behind_the_text_is_flagged() {
     let parts = components(&document(vec![paragraph(vec![
         floating_rect("BEHIND_TEXT"),
