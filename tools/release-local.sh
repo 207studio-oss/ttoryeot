@@ -3,7 +3,8 @@
 # 올리지 않고, 서명·공증하지 않는다. usage: tools/release-local.sh <version 예: v0.3.0> <out-dir>
 # 필요: rustup target aarch64/x86_64-apple-darwin, x86_64-pc-windows-gnu, x86_64-unknown-linux-gnu,
 #       aarch64-apple-ios, aarch64-apple-ios-sim,
-#       mingw-w64(x86_64-w64-mingw32-gcc), zig + cargo-zigbuild(리눅스 glibc 2.17), makensis(Windows 설치 파일),
+#       mingw-w64(x86_64-w64-mingw32-gcc, x86_64-w64-mingw32-strip),
+#       zig + cargo-zigbuild(리눅스 glibc 2.17), makensis(Windows 설치 파일),
 #       Xcode(xcodebuild, iOS XCFramework)
 #
 # 만드는 것(<ver>는 넘긴 버전 그대로):
@@ -21,6 +22,7 @@ cd $root
 [[ -z $(git status --porcelain) ]] || { echo "작업 트리가 깨끗하지 않습니다" >&2; exit 1; }
 [[ $out != $root && $out != $root/* ]] || { echo "out-dir은 저장소 밖에 두세요" >&2; exit 1; }
 command -v makensis >/dev/null || { echo "makensis가 없습니다(brew install makensis)" >&2; exit 1; }
+command -v x86_64-w64-mingw32-strip >/dev/null || { echo "x86_64-w64-mingw32-strip이 없습니다(brew install mingw-w64)" >&2; exit 1; }
 command -v xcodebuild >/dev/null || { echo "xcodebuild가 없습니다(Xcode 설치)" >&2; exit 1; }
 # 설치 파일 버전 정보: v0.3.0-rc.1 -> 표시 0.3.0-rc.1, 숫자 0.3.0.0
 display_version=${version#v}
@@ -66,7 +68,9 @@ for target in aarch64-apple-darwin x86_64-apple-darwin x86_64-pc-windows-gnu x86
   cp README.md CHANGELOG.md $stage/
   notices $stage $target
   case $target in
-    *windows*)
+    x86_64-pc-windows-gnu)
+      # MinGW COFF 기호의 로컬 경로를 제거한 사본을 ZIP과 설치 파일에 함께 넣는다.
+      x86_64-w64-mingw32-strip --strip-all "$stage/ttoryeot.exe" "$stage/ttoryeot-mcp.exe"
       (cd $out && zip -qrX $name.zip $name)
       LC_ALL=en_US.UTF-8 makensis -INPUTCHARSET UTF8 -WX -V2 \
         -DVERSION=$display_version -DVERSION_NUM=$numeric.0 \
